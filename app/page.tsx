@@ -7,11 +7,14 @@ type Fabrica = { id: string; nome: string };
 
 type Produto = {
   id: string;
-  fabrica_id: string;
+  fabrica_id: string | null;
+  fabricante?: string | null; // texto vindo das planilhas
   codigo: string | null;
   descricao: string;
-  preco: number | null;
-  unidade: string | null;
+  preco: number | null; // campo antigo (pode ser null)
+  unidade: string | null; // campo antigo (pode ser null)
+  valor_unitario?: number | null;
+  valor_com_frete?: number | null;
 };
 
 function Badge({ children }: { children: React.ReactNode }) {
@@ -34,7 +37,7 @@ function Badge({ children }: { children: React.ReactNode }) {
   );
 }
 
-function money(v: number | null) {
+function money(v: number | null | undefined) {
   if (v === null || v === undefined) return "-";
   try {
     return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
@@ -51,6 +54,13 @@ export default function Home() {
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
+  // Mapa id -> nome (para mostrar nome da fábrica quando vier apenas fabrica_id)
+  const fabricaNomePorId = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const f of fabricas) m.set(f.id, f.nome);
+    return m;
+  }, [fabricas]);
+
   useEffect(() => {
     async function loadFabricas() {
       const { data, error } = await supabase.from("fabricas").select("*").order("nome");
@@ -61,18 +71,14 @@ export default function Home() {
   }, []);
 
   const dica = useMemo(
-    () => `Dica: selecione a fábrica e busque por código (ex.: FT-200) ou descrição (ex.: coifa 1.20).`,
+    () =>
+      `Dica: busque por código (ex.: FT-200) ou descrição (ex.: coifa 1.20). Se quiser, selecione uma fábrica para filtrar.`,
     []
   );
 
   const buscar = async () => {
     setErro(null);
     setResultados([]);
-
-    if (!fabricaId) {
-      setErro("Selecione uma fábrica para consultar o catálogo.");
-      return;
-    }
 
     const t = termo.trim();
     if (!t) {
@@ -85,7 +91,11 @@ export default function Home() {
     try {
       const pareceCodigo = /[0-9]/.test(t) || /[-_]/.test(t);
 
-      let q = supabase.from("produtos").select("*").eq("fabrica_id", fabricaId).limit(10);
+      let q = supabase.from("produtos").select("*").limit(50);
+
+      if (fabricaId) {
+        q = q.eq("fabrica_id", fabricaId);
+      }
 
       if (pareceCodigo) {
         q = q.ilike("codigo", `%${t}%`);
@@ -103,17 +113,39 @@ export default function Home() {
       setResultados((data ?? []) as Produto[]);
 
       if (!data || data.length === 0) {
-        setErro("Não encontrei nenhum item com esse termo para essa fábrica.");
+        setErro(fabricaId ? "Não encontrei nenhum item com esse termo para essa fábrica." : "Não encontrei nenhum item com esse termo.");
       }
     } finally {
       setCarregando(false);
     }
   };
 
+  // Resolve o "nome para exibir" (preferência: fabricante texto > nome via fabrica_id)
+  const getNomeFabrica = (p: Produto) => {
+    const nomeTexto = (p.fabricante ?? "").trim();
+    if (nomeTexto) return nomeTexto;
+
+    if (p.fabrica_id) {
+      return fabricaNomePorId.get(p.fabrica_id) ?? "Fábrica";
+    }
+
+    return "Fábrica";
+  };
+
   const copiarResposta = (p: Produto) => {
     const linhaCodigo = p.codigo ? `${p.codigo} — ` : "";
     const linhaUnidade = p.unidade ? ` (${p.unidade})` : "";
-    const texto = `Encontrei aqui ✅\n${linhaCodigo}${p.descricao}\nPreço: ${money(p.preco)}${linhaUnidade}\n\nQuer que eu já monte a cotação com quantidade e condição de pagamento?`;
+    const precoPreferido = p.preco ?? p.valor_unitario ?? null;
+
+    const nomeFab = getNomeFabrica(p);
+
+    const texto =
+      `Encontrei aqui ✅\n` +
+      `Fábrica: ${nomeFab}\n` +
+      `${linhaCodigo}${p.descricao}\n` +
+      `Preço: ${money(precoPreferido)}${linhaUnidade}\n\n` +
+      `Quer que eu já monte a cotação com quantidade e condição de pagamento?`;
+
     navigator.clipboard.writeText(texto);
   };
 
@@ -222,7 +254,7 @@ export default function Home() {
               outline: "none",
             }}
           >
-            <option value="">Selecione a fábrica</option>
+            <option value="">Todas as fábricas</option>
             {fabricas.map((f) => (
               <option key={f.id} value={f.id}>
                 {f.nome}
@@ -286,48 +318,54 @@ export default function Home() {
 
           {resultados.length > 0 && (
             <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
-              {resultados.map((p) => (
-                <div
-                  key={p.id}
-                  style={{
-                    border: "1px solid #E5E7EB",
-                    borderRadius: 14,
-                    padding: 14,
-                    background: "#FFFFFF",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "flex-start",
-                    gap: 12,
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <div style={{ minWidth: 240 }}>
-                    <div style={{ fontWeight: 900, fontSize: 16 }}>
-                      {p.codigo ? `${p.codigo} — ` : ""}
-                      {p.descricao}
-                    </div>
-                    <div style={{ marginTop: 6, color: "#6B7280", fontWeight: 800 }}>
-                      Preço: {money(p.preco)}
-                      {p.unidade ? ` (${p.unidade})` : ""}
-                    </div>
-                  </div>
+              {resultados.map((p) => {
+                const precoPreferido = p.preco ?? p.valor_unitario ?? null;
+                const nomeFab = getNomeFabrica(p);
 
-                  <button
-                    onClick={() => copiarResposta(p)}
+                return (
+                  <div
+                    key={p.id}
                     style={{
-                      padding: "10px 12px",
-                      borderRadius: 14,
                       border: "1px solid #E5E7EB",
+                      borderRadius: 14,
+                      padding: 14,
                       background: "#FFFFFF",
-                      fontWeight: 900,
-                      cursor: "pointer",
-                      minWidth: 170,
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "flex-start",
+                      gap: 12,
+                      flexWrap: "wrap",
                     }}
                   >
-                    Copiar resposta
-                  </button>
-                </div>
-              ))}
+                    <div style={{ minWidth: 240 }}>
+                      <div style={{ fontWeight: 900, fontSize: 16 }}>
+                        {p.codigo ? `${p.codigo} — ` : ""}
+                        {p.descricao}
+                      </div>
+
+                      <div style={{ marginTop: 6, color: "#6B7280", fontWeight: 800 }}>
+                        {nomeFab} • Preço: {money(precoPreferido)}
+                        {p.unidade ? ` (${p.unidade})` : ""}
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => copiarResposta(p)}
+                      style={{
+                        padding: "10px 12px",
+                        borderRadius: 14,
+                        border: "1px solid #E5E7EB",
+                        background: "#FFFFFF",
+                        fontWeight: 900,
+                        cursor: "pointer",
+                        minWidth: 170,
+                      }}
+                    >
+                      Copiar resposta
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
