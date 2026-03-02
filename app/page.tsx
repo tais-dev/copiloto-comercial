@@ -77,48 +77,50 @@ export default function Home() {
   );
 
   const buscar = async () => {
-    setErro(null);
-    setResultados([]);
+  setErro(null);
+  setResultados([]);
 
-    const t = termo.trim();
-    if (!t) {
-      setErro("Digite um termo para buscar (código ou descrição).");
+  const t = termo.trim();
+  if (!t) {
+    setErro("Digite um termo para buscar (código ou descrição).");
+    return;
+  }
+
+  setCarregando(true);
+
+  try {
+    // normaliza hífen e underscore
+    const normalized = t.replace(/[-_]/g, " ");
+    const parts = normalized.split(/\s+/).filter(Boolean);
+
+    let q = supabase.from("produtos").select("*").limit(50);
+
+    // se selecionou fábrica, filtra
+    if (fabricaId) {
+      q = q.eq("fabrica_id", fabricaId);
+    }
+
+    // para cada palavra digitada, exige que ela exista no código OU descrição
+    for (const p of parts) {
+      q = q.or(`codigo.ilike.%${p}%,descricao.ilike.%${p}%`);
+    }
+
+    const { data, error } = await q;
+
+    if (error) {
+      setErro(error.message);
       return;
     }
 
-    setCarregando(true);
+    setResultados((data ?? []) as Produto[]);
 
-    try {
-      const pareceCodigo = /[0-9]/.test(t) || /[-_]/.test(t);
-
-      let q = supabase.from("produtos").select("*").limit(50);
-
-      if (fabricaId) {
-        q = q.eq("fabrica_id", fabricaId);
-      }
-
-      if (pareceCodigo) {
-        q = q.ilike("codigo", `%${t}%`);
-      } else {
-        q = q.ilike("descricao", `%${t}%`);
-      }
-
-      const { data, error } = await q;
-
-      if (error) {
-        setErro(error.message);
-        return;
-      }
-
-      setResultados((data ?? []) as Produto[]);
-
-      if (!data || data.length === 0) {
-        setErro(fabricaId ? "Não encontrei nenhum item com esse termo para essa fábrica." : "Não encontrei nenhum item com esse termo.");
-      }
-    } finally {
-      setCarregando(false);
+    if (!data || data.length === 0) {
+      setErro("Não encontrei nenhum item com esse termo.");
     }
-  };
+  } finally {
+    setCarregando(false);
+  }
+};
 
   // Resolve o "nome para exibir" (preferência: fabricante texto > nome via fabrica_id)
   const getNomeFabrica = (p: Produto) => {
