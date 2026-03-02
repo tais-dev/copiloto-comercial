@@ -221,7 +221,7 @@ export default function Home() {
 
         {/* Header */}
         <div style={{ marginTop: 18 }}>
-          <h1 style={{ margin: 0, fontSize: 34, letterSpacing: -0.5 }}>Copiloto Comercial</h1>
+          <h1 style={{ margin: 0, fontSize: 34, letterSpacing: -0.5,  color: "#0F172A",fontWeight: 900}}>Pedro Copiloto</h1>
           <p style={{ marginTop: 10, color: "#6B7280", fontSize: 16 }}>
             Organize mensagens, consulte preços e gere respostas rápidas.
           </p>
@@ -238,24 +238,32 @@ export default function Home() {
             boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
           }}
         >
-          <h2 style={{ margin: 0, fontSize: 18 }}>Consulta rápida de catálogo</h2>
-          <p style={{ marginTop: 8, color: "#6B7280", fontSize: 14 }}>{dica}</p>
+          <h2
+  style={{
+    margin: 0,
+    fontSize: 18,
+    fontWeight: 900,
+    color: "#0F172A",
+  }}
+>Consulta rápida de catálogo</h2>
+          <p style={{ marginTop: 8, color: "#374151", fontSize: 14 }}>{dica}</p>
 
           <select
-            value={fabricaId}
-            onChange={(e) => setFabricaId(e.target.value)}
-            style={{
-              width: "100%",
-              marginTop: 12,
-              padding: 14,
-              borderRadius: 14,
-              border: "1px solid #E5E7EB",
-              fontSize: 16,
-              fontWeight: 800,
-              background: "#FCFCFD",
-              outline: "none",
-            }}
-          >
+  value={fabricaId}
+  onChange={(e) => setFabricaId(e.target.value)}
+  style={{
+    width: "100%",
+    marginTop: 12,
+    padding: 14,
+    borderRadius: 14,
+    border: "1px solid #D1D5DB",
+    fontSize: 16,
+    fontWeight: 800,
+    background: "#FFFFFF",
+    color: "#111827", // ← IMPORTANTE
+    outline: "none",
+  }}
+>
             <option value="">Todas as fábricas</option>
             {fabricas.map((f) => (
               <option key={f.id} value={f.id}>
@@ -273,15 +281,16 @@ export default function Home() {
                 if (e.key === "Enter") buscar();
               }}
               style={{
-                flex: 1,
-                minWidth: 240,
-                padding: 14,
-                borderRadius: 14,
-                border: "1px solid #E5E7EB",
-                fontSize: 16,
-                background: "#FCFCFD",
-                outline: "none",
-              }}
+    flex: 1,
+    minWidth: 240,
+    padding: 14,
+    borderRadius: 14,
+    border: "1px solid #D1D5DB",
+    fontSize: 16,
+    background: "#FFFFFF",
+    color: "#111827", // ← IMPORTANTE
+    outline: "none",
+  }}
             />
 
             <button
