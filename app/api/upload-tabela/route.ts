@@ -150,7 +150,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Nenhuma linha válida para importar." }, { status: 400 });
     }
 
-    const supabase = createServerSupabaseClient();
+    const supabase = await createServerSupabaseClient();
 
     // IMPORTANTE: conflito por fabrica_id + tipo_tabela + codigo
     const { error } = await supabase
