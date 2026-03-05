@@ -1,0 +1,39 @@
+table_name,column_name,data_type,is_nullable
+fabricas,id,uuid,NO
+fabricas,nome,text,NO
+fabricas,created_at,timestamp with time zone,YES
+mensagens,id,uuid,NO
+mensagens,cliente,text,YES
+mensagens,mensagem_original,text,NO
+mensagens,categoria,text,YES
+mensagens,prioridade,text,YES
+mensagens,sugestao,text,YES
+mensagens,status,text,YES
+mensagens,created_at,timestamp with time zone,YES
+mensagens,fabrica_id,uuid,YES
+mensagens,sugestao_ia,text,YES
+mensagens,sugestao_catalogo,text,YES
+produtos,id,uuid,NO
+produtos,fabrica_id,uuid,YES
+produtos,codigo,text,YES
+produtos,descricao,text,NO
+produtos,preco,numeric,YES
+produtos,unidade,text,YES
+produtos,updated_at,timestamp with time zone,YES
+produtos,fabricante,text,YES
+produtos,categoria,text,YES
+produtos,id_fabrica,text,YES
+produtos,ncm,text,YES
+produtos,ean,text,YES
+produtos,valor_unitario,numeric,YES
+produtos,valor_com_frete,numeric,YES
+produtos,tipo_tabela,text,YES
+produtos_import,fabricante,text,YES
+produtos_import,categoria,text,YES
+produtos_import,codigo,text,YES
+produtos_import,id_fabrica,text,YES
+produtos_import,descricao,text,YES
+produtos_import,ncm,text,YES
+produtos_import,ean,text,YES
+produtos_import,valor_unitario,numeric,YES
+produtos_import,valor_com_frete,numeric,YES

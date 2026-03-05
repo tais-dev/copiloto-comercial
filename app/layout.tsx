@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import AuthGuard from "./components/AuthGuard";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -13,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Copiloto Comercial",
-  description: "Sistema inteligente de apoio ao representante comercial",
+  title: "União VVT",
+  description: "Sistema comercial União VVT",
 };
 
 export default function RootLayout({
@@ -26,27 +27,10 @@ export default function RootLayout({
     <html lang="pt-BR">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-        style={{
-          margin: 0,
-          background: "#f6f7fb",
-        }}
+        style={{ margin: 0, background: "#0F172A" }}
       >
-        <div
-          style={{
-            minHeight: "100vh",
-            padding: "32px 16px",
-          }}
-        >
-          <div
-            style={{
-              maxWidth: "1100px",
-              margin: "0 auto",
-              width: "100%",
-            }}
-          >
-            {children}
-          </div>
-        </div>
+        {/* ====== AUTH GUARD: controla login e shell da aplicação ====== */}
+        <AuthGuard>{children}</AuthGuard>
       </body>
     </html>
   );
