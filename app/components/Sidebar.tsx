@@ -7,20 +7,54 @@ import { supabase } from "@/lib/supabaseClient";
 
 // ====== SIDEBAR: ITENS DE MENU ======
 const NAV = [
-  { label: "Consulta de Preços", href: "/" },
-  { label: "Upload de Tabelas", href: "/upload-tabelas" },
-  { label: "Inbox", href: "/inbox" },
+  {
+    label: "Clientes",
+    href: "/clientes",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+        <circle cx="9" cy="7" r="4" />
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+      </svg>
+    ),
+  },
+  {
+    label: "Buscar Produtos",
+    href: "/buscar-produtos",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="11" cy="11" r="8" />
+        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+      </svg>
+    ),
+  },
+  {
+    label: "Upload de Tabelas",
+    href: "/upload-tabelas",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="16 16 12 12 8 16" />
+        <line x1="12" y1="12" x2="12" y2="21" />
+        <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
+      </svg>
+    ),
+  },
+  // Inbox — oculto temporariamente
+  // { label: "Inbox", href: "/inbox", icon: (...) },
 ];
 
 // ====== SIDEBAR: ITEM DE MENU ======
 function NavItem({
   href,
   label,
+  icon,
   onClick,
   active,
 }: {
   href: string;
   label: string;
+  icon: React.ReactNode;
   onClick?: () => void;
   active: boolean;
 }) {
@@ -29,19 +63,23 @@ function NavItem({
       href={href}
       onClick={onClick}
       style={{
-        display: "block",
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
         padding: "10px 14px",
         borderRadius: 8,
         marginBottom: 2,
         textDecoration: "none",
-        background: active ? "rgba(59,130,246,0.12)" : "transparent",
-        color: active ? "#60A5FA" : "#94A3B8",
-        fontWeight: active ? 700 : 500,
+        background: active ? "rgba(0,229,160,0.08)" : "transparent",
+        color: active ? "#00e5a0" : "#888",
+        fontWeight: active ? 600 : 500,
         fontSize: 14,
-        borderLeft: `3px solid ${active ? "#3B82F6" : "transparent"}`,
+        borderLeft: `3px solid ${active ? "#00e5a0" : "transparent"}`,
         letterSpacing: 0.1,
+        transition: "all 150ms ease",
       }}
     >
+      <span style={{ opacity: active ? 1 : 0.6 }}>{icon}</span>
       {label}
     </Link>
   );
@@ -61,37 +99,38 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
     <div
       style={{
         width: 230,
-        background: "#0F172A",
+        background: "#0f0f0f",
         height: "100%",
         display: "flex",
         flexDirection: "column",
         flexShrink: 0,
+        borderRight: "1px solid #2e2e2e",
       }}
     >
       {/* Logo */}
       <div
         style={{
           padding: "28px 22px 22px",
-          borderBottom: "1px solid #1E293B",
+          borderBottom: "1px solid #2e2e2e",
         }}
       >
         <div
           style={{
             fontSize: 10,
             fontWeight: 700,
-            color: "#475569",
+            color: "#555",
             letterSpacing: 2,
             textTransform: "uppercase",
             marginBottom: 6,
           }}
         >
-          Sistema Comercial
+          Copiloto Comercial
         </div>
         <div
           style={{
-            fontSize: 22,
+            fontSize: 20,
             fontWeight: 900,
-            color: "#F8FAFC",
+            color: "#f0f0f0",
             letterSpacing: -0.5,
           }}
         >
@@ -105,7 +144,7 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
           style={{
             fontSize: 10,
             fontWeight: 700,
-            color: "#334155",
+            color: "#555",
             letterSpacing: 1.5,
             textTransform: "uppercase",
             padding: "0 14px",
@@ -120,7 +159,8 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
             key={item.href}
             href={item.href}
             label={item.label}
-            active={pathname === item.href}
+            icon={item.icon}
+            active={pathname === item.href || pathname.startsWith(item.href + "/")}
             onClick={onClose}
           />
         ))}
@@ -130,7 +170,7 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
       <div
         style={{
           padding: "16px 12px",
-          borderTop: "1px solid #1E293B",
+          borderTop: "1px solid #2e2e2e",
           display: "flex",
           flexDirection: "column",
           gap: 8,
@@ -146,7 +186,7 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
             borderRadius: 8,
             border: "none",
             background: "transparent",
-            color: "#64748B",
+            color: "#555",
             fontWeight: 600,
             fontSize: 13,
             textAlign: "left",
@@ -155,8 +195,8 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
         >
           Sair
         </button>
-        <div style={{ fontSize: 11, color: "#1E293B", fontWeight: 600, padding: "0 14px" }}>
-          v0.1 — União VVT
+        <div style={{ fontSize: 11, color: "#2e2e2e", fontWeight: 600, padding: "0 14px" }}>
+          v0.2 — União VVT
         </div>
       </div>
     </div>
@@ -211,12 +251,12 @@ export default function Sidebar() {
           left: 0,
           right: 0,
           height: 56,
-          background: "#0F172A",
+          background: "#0f0f0f",
           zIndex: 100,
           alignItems: "center",
           padding: "0 16px",
           gap: 14,
-          borderBottom: "1px solid #1E293B",
+          borderBottom: "1px solid #2e2e2e",
         }}
       >
         <button
@@ -225,7 +265,7 @@ export default function Sidebar() {
           style={{
             background: "none",
             border: "none",
-            color: "#94A3B8",
+            color: "#888",
             fontSize: 22,
             cursor: "pointer",
             padding: "4px 6px",
@@ -235,7 +275,7 @@ export default function Sidebar() {
         >
           ☰
         </button>
-        <span style={{ fontSize: 17, fontWeight: 900, color: "#F8FAFC" }}>
+        <span style={{ fontSize: 17, fontWeight: 900, color: "#f0f0f0" }}>
           União VVT
         </span>
       </div>
@@ -248,7 +288,7 @@ export default function Sidebar() {
             style={{
               position: "fixed",
               inset: 0,
-              background: "rgba(0,0,0,0.55)",
+              background: "rgba(0,0,0,0.7)",
               zIndex: 200,
             }}
           />

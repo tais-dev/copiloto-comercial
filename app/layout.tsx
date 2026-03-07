@@ -1,21 +1,24 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { DM_Sans, DM_Mono } from "next/font/google";
 import "./globals.css";
 import AuthGuard from "./components/AuthGuard";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// ====== UI: FONTES GOOGLE (DM Sans + DM Mono) ======
+const dmSans = DM_Sans({
+  variable: "--font-dm-sans",
   subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "900"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const dmMono = DM_Mono({
+  variable: "--font-dm-mono",
   subsets: ["latin"],
+  weight: ["400", "500"],
 });
 
 export const metadata: Metadata = {
-  title: "União VVT",
-  description: "Sistema comercial União VVT",
+  title: "Copiloto Comercial",
+  description: "Sistema comercial inteligente para representantes",
 };
 
 export default function RootLayout({
@@ -26,8 +29,8 @@ export default function RootLayout({
   return (
     <html lang="pt-BR">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-        style={{ margin: 0, background: "#0F172A" }}
+        className={`${dmSans.variable} ${dmMono.variable} antialiased`}
+        style={{ margin: 0, background: "#0f0f0f" }}
       >
         {/* ====== AUTH GUARD: controla login e shell da aplicação ====== */}
         <AuthGuard>{children}</AuthGuard>

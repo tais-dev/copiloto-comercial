@@ -1,62 +1,54 @@
 "use client";
 
+// ====== AUTH GUARD: PROTEÇÃO DE ROTAS + SHELL AUTENTICADO ======
+// Todos os hooks são chamados antes de qualquer return condicional (Rules of Hooks).
 import { useEffect, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import Sidebar from "./Sidebar";
-import type { Session } from "@supabase/supabase-js";
 
 const PUBLIC_ROUTES = ["/login"];
 
-// ====== AUTH GUARD: PROTEÇÃO DE ROTAS + SHELL AUTENTICADO ======
-// - Rota pública (/login): renderiza apenas o children, sem sidebar
-// - Sem sessão em rota protegida: redireciona para /login
-// - Com sessão: renderiza sidebar + conteúdo
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<Session | null | undefined>(undefined);
-  const pathname = usePathname();
   const router = useRouter();
+  const pathname = usePathname();
+  const [checked, setChecked] = useState(false);
+  const [authed, setAuthed] = useState(false);
 
+  // ====== AUTH GUARD: VERIFICAÇÃO DE SESSÃO ======
+  // useEffect sempre chamado na mesma posição — sem returns condicionais antes disso.
   useEffect(() => {
-    // Busca sessão inicial
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
+    const isPublic = PUBLIC_ROUTES.includes(pathname);
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session && !isPublic) {
+        router.replace("/login");
+        return;
+      }
+      if (session && pathname === "/login") {
+        router.replace("/");
+        return;
+      }
+      setAuthed(true);
+      setChecked(true);
     });
 
-    // Escuta mudanças de auth (login/logout)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
+    // Escuta mudanças de auth (ex: logout em outra aba)
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session && !isPublic) {
+        router.replace("/login");
+      }
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [pathname, router]);
 
-  // Carregando sessão
-  if (session === undefined) {
-    return (
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          minHeight: "100vh",
-          background: "#0F172A",
-        }}
-      >
-        <div style={{ color: "#475569", fontSize: 14, fontWeight: 600 }}>
-          Carregando...
-        </div>
-      </div>
-    );
-  }
+  // Aguardando verificação de autenticação — não renderiza nada
+  if (!checked) return null;
 
   const isPublic = PUBLIC_ROUTES.includes(pathname);
-
-  // Não logado em rota protegida → redireciona para login
-  if (!session && !isPublic) {
-    router.replace("/login");
-    return null;
-  }
 
   // Rota pública (tela de login) → sem sidebar
   if (isPublic) {
@@ -65,11 +57,12 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
 
   // Logado → sidebar + conteúdo
   return (
-    <div style={{ display: "flex", minHeight: "100vh" }}>
+    <div style={{ display: "flex", minHeight: "100vh", background: "#0f0f0f" }}>
       <Sidebar />
+      {/* ====== UI: MOBILE CONTRAST — área principal ====== */}
       <main
         className="uvvt-content"
-        style={{ flex: 1, minWidth: 0, background: "#F1F5F9" }}
+        style={{ flex: 1, minWidth: 0, background: "#0f0f0f" }}
       >
         {children}
       </main>

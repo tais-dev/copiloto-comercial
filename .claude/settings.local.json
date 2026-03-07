@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install busboy @types/busboy)",
+      "Bash(npm list busboy)"
+    ]
+  }
+}

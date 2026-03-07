@@ -1,26 +1,67 @@
 @import "tailwindcss";
 
+/* ====== UI: CSS VARIABLES (DESIGN DARK) ====== */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #0f0f0f;
+  --bg2: #1a1a1a;
+  --bg3: #242424;
+  --border: #2e2e2e;
+  --text: #f0f0f0;
+  --text2: #888;
+  --text3: #555;
+  --green: #00e5a0;
+  --blue: #60a5fa;
+  --orange: #fb923c;
+  --warn: #f59e0b;
+
+  /* compat: manter variáveis antigas usadas por outros componentes */
+  --background: #0f0f0f;
+  --foreground: #f0f0f0;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --font-sans: var(--font-dm-sans);
+  --font-mono: var(--font-dm-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+/* ====== UI: MOBILE CONTRAST ====== */
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-dm-sans), 'DM Sans', Arial, Helvetica, sans-serif;
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Preços e códigos sempre em DM Mono */
+.mono {
+  font-family: var(--font-dm-mono), 'DM Mono', monospace;
+  font-weight: 500;
+}
+
+/* ====== UI: SKELETON LOADING ====== */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.skeleton {
+  background: var(--bg3);
+  border-radius: 8px;
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+/* ====== UI: TRANSIÇÕES DE TELA ====== */
+.page-enter {
+  opacity: 0;
+  transform: translateX(16px);
+}
+
+.page-enter-active {
+  opacity: 1;
+  transform: translateX(0);
+  transition: opacity 350ms ease, transform 350ms ease;
 }

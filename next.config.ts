@@ -1,7 +1,14 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // ====== UPLOAD: limite de body para Server Actions ======
+  experimental: {
+    serverActions: {
+      bodySizeLimit: "50mb",
+    },
+  },
+  // ====== UPLOAD: limite de body para Route Handlers (/api/*) — 50MB para planilhas grandes ======
+  middlewareClientMaxBodySize: 50 * 1024 * 1024,
 };
 
 export default nextConfig;

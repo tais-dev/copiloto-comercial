@@ -24,10 +24,10 @@ export default function LoginPage() {
       });
 
       if (error) {
-  console.log("ERRO SUPABASE:", error.message, error.status);
-  setErro(error.message); // mostra o erro real na tela
-  return;
-}
+        console.log("ERRO SUPABASE:", error.message, error.status);
+        setErro(error.message);
+        return;
+      }
 
       router.replace("/");
     } finally {
@@ -39,7 +39,7 @@ export default function LoginPage() {
     <div
       style={{
         minHeight: "100vh",
-        background: "#0F172A",
+        background: "linear-gradient(135deg, #0f0f0f 0%, #1a1a1a 100%)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -50,20 +50,19 @@ export default function LoginPage() {
         style={{
           width: "100%",
           maxWidth: 400,
-          background: "#1E293B",
-          borderRadius: 20,
-          padding: "40px 36px",
-          boxShadow: "0 25px 50px rgba(0,0,0,0.5)",
-          border: "1px solid #334155",
+          background: "#1a1a1a",
+          borderRadius: 24,
+          padding: "40px 32px",
+          border: "1px solid #2e2e2e",
         }}
       >
-        {/* Logo */}
+        {/* Identidade */}
         <div style={{ marginBottom: 36, textAlign: "center" }}>
           <div
             style={{
-              fontSize: 10,
+              fontSize: 11,
               fontWeight: 700,
-              color: "#475569",
+              color: "#555",
               letterSpacing: 2,
               textTransform: "uppercase",
               marginBottom: 8,
@@ -73,13 +72,13 @@ export default function LoginPage() {
           </div>
           <div
             style={{
-              fontSize: 30,
-              fontWeight: 900,
-              color: "#F8FAFC",
+              fontSize: 28,
+              fontWeight: 800,
+              color: "#f0f0f0",
               letterSpacing: -0.5,
             }}
           >
-            União VVT
+            Uniao VVT
           </div>
         </div>
 
@@ -90,8 +89,7 @@ export default function LoginPage() {
               style={{
                 display: "block",
                 fontSize: 13,
-                fontWeight: 700,
-                color: "#94A3B8",
+                color: "#888",
                 marginBottom: 6,
               }}
             >
@@ -106,12 +104,12 @@ export default function LoginPage() {
               placeholder="seu@email.com"
               style={{
                 width: "100%",
-                padding: "13px 14px",
-                borderRadius: 12,
-                border: "1px solid #334155",
-                background: "#0F172A",
-                color: "#F8FAFC",
-                fontSize: 15,
+                padding: "14px 16px",
+                borderRadius: 14,
+                border: "1px solid #2e2e2e",
+                background: "#242424",
+                color: "#f0f0f0",
+                fontSize: 16,
                 outline: "none",
                 boxSizing: "border-box",
               }}
@@ -124,8 +122,7 @@ export default function LoginPage() {
               style={{
                 display: "block",
                 fontSize: 13,
-                fontWeight: 700,
-                color: "#94A3B8",
+                color: "#888",
                 marginBottom: 6,
               }}
             >
@@ -139,12 +136,12 @@ export default function LoginPage() {
               placeholder="••••••••"
               style={{
                 width: "100%",
-                padding: "13px 14px",
-                borderRadius: 12,
-                border: "1px solid #334155",
-                background: "#0F172A",
-                color: "#F8FAFC",
-                fontSize: 15,
+                padding: "14px 16px",
+                borderRadius: 14,
+                border: "1px solid #2e2e2e",
+                background: "#242424",
+                color: "#f0f0f0",
+                fontSize: 16,
                 outline: "none",
                 boxSizing: "border-box",
               }}
@@ -155,14 +152,13 @@ export default function LoginPage() {
           {erro && (
             <div
               style={{
-                marginBottom: 18,
-                padding: "10px 14px",
-                borderRadius: 10,
-                background: "rgba(239,68,68,0.12)",
-                border: "1px solid rgba(239,68,68,0.25)",
-                color: "#FCA5A5",
+                marginBottom: 20,
+                padding: "12px 16px",
+                borderRadius: 12,
+                background: "rgba(239,68,68,0.08)",
+                border: "1px solid rgba(239,68,68,0.2)",
+                color: "#fca5a5",
                 fontSize: 14,
-                fontWeight: 600,
               }}
             >
               {erro}
@@ -175,16 +171,15 @@ export default function LoginPage() {
             disabled={carregando}
             style={{
               width: "100%",
-              padding: "14px",
-              borderRadius: 12,
+              padding: "16px",
+              borderRadius: 14,
               border: "none",
-              background: "#3B82F6",
-              color: "#FFFFFF",
+              background: carregando ? "#1a2e25" : "#00e5a0",
+              color: carregando ? "#555" : "#0f0f0f",
               fontSize: 16,
-              fontWeight: 900,
+              fontWeight: 700,
               cursor: carregando ? "not-allowed" : "pointer",
-              opacity: carregando ? 0.7 : 1,
-              letterSpacing: 0.2,
+              transition: "all 200ms ease",
             }}
           >
             {carregando ? "Entrando..." : "Entrar"}
