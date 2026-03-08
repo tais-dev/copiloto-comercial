@@ -1,8 +1,8 @@
 "use client";
 
 // ====== CLIENTS (CRUD) — TELA DE CONFIGURAÇÃO DO CLIENTE ======
-import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { use, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { FABRICA_COR, FABRICA_LABEL } from "@/lib/types";
 import { nomeCliente } from "@/lib/utils";
@@ -31,9 +31,9 @@ type RegiaoFrete = {
 
 // ====== CONSTANTES DE CONFIGURAÇÃO ======
 const CANAIS_AMAPA = [
-  { value: "distribuidor", label: "Distribuidor", desconto: "−45%" },
-  { value: "revenda", label: "Revenda", desconto: "−37%" },
-  { value: "atacado", label: "Atacado", desconto: "−31%" },
+  { value: "distribuidor", label: "Distribuidor", desconto: null },
+  { value: "revenda", label: "Revenda", desconto: null },
+  { value: "atacado", label: "Atacado", desconto: "28,09%" },
 ];
 
 const MODALIDADES_FRETE = [
@@ -49,10 +49,9 @@ const TABELAS_GPANIZ = [
 ];
 
 // ====== CLIENTS (CRUD) — PAGE DE CONFIGURAÇÃO ======
-export default function ClienteConfigurarPage() {
-  const params = useParams();
+export default function ClienteConfigurarPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
   const router = useRouter();
-  const clienteId = params.id as string;
 
   const [cliente, setCliente] = useState<ClienteInfo | null>(null);
   const [fabricasDoCliente, setFabricasDoCliente] = useState<string[]>([]);
@@ -83,7 +82,7 @@ export default function ClienteConfigurarPage() {
       const { data: clienteData } = await supabase
         .from("clientes")
         .select("id, razao_social, nome_fantasia, canal")
-        .eq("id", clienteId)
+        .eq("id", id)
         .single();
 
       if (!clienteData) {
@@ -97,7 +96,7 @@ export default function ClienteConfigurarPage() {
       const { data: configs } = await supabase
         .from("clientes_fabricas")
         .select("fabrica, tabela, canal, regiao, modalidade_frete")
-        .eq("cliente_id", clienteId);
+        .eq("cliente_id", id);
 
       const cfgs = (configs ?? []) as ClienteFabricaConfig[];
       setFabricasDoCliente(cfgs.map((c) => c.fabrica));
@@ -123,7 +122,7 @@ export default function ClienteConfigurarPage() {
     }
 
     carregar();
-  }, [clienteId]);
+  }, [id]);
 
   // ====== CLIENTS (CRUD) — salvar configurações por fábrica ======
   async function salvar() {
@@ -135,7 +134,7 @@ export default function ClienteConfigurarPage() {
         await supabase
           .from("clientes_fabricas")
           .upsert(
-            { cliente_id: clienteId, fabrica: "gpaniz", tabela: tabelaGpaniz },
+            { cliente_id: id, fabrica: "gpaniz", tabela: tabelaGpaniz },
             { onConflict: "cliente_id,fabrica" }
           );
       }
@@ -145,7 +144,7 @@ export default function ClienteConfigurarPage() {
           .from("clientes_fabricas")
           .upsert(
             {
-              cliente_id: clienteId,
+              cliente_id: id,
               fabrica: "amapa",
               canal: canalAmapa,
               modalidade_frete: modalidadeAmapa,
@@ -166,17 +165,21 @@ export default function ClienteConfigurarPage() {
 
   // ====== CLIENTS (CRUD) — salvar nome fantasia ======
   async function salvarNome() {
-    if (!cliente) return;
-    await supabase
+    const novoNome = nomeFantasiaEdit.trim() || null;
+    const { error } = await supabase
       .from("clientes")
-      .update({ nome_fantasia: nomeFantasiaEdit.trim() || null })
-      .eq("id", clienteId);
-    setCliente({ ...cliente, nome_fantasia: nomeFantasiaEdit.trim() || null });
+      .update({ nome_fantasia: novoNome })
+      .eq("id", id);
+    if (error) {
+      console.error("Erro ao salvar nome:", error);
+      setErro(`Erro ao salvar nome: ${error.message}`);
+      return;
+    }
     setEditandoNome(false);
+    setCliente((prev) => prev ? { ...prev, nome_fantasia: novoNome } : prev);
   }
 
   const nomeMostrado = cliente ? nomeCliente(cliente) : "Cliente";
-  const isAtacado = cliente?.canal?.toUpperCase().includes("ATAC");
 
   // ====== UI: HELPER PARA ESTILO DE BOTÃO DE GRUPO ======
   function btnGrupo(value: string, current: string, cor: string): React.CSSProperties {
@@ -285,9 +288,20 @@ export default function ClienteConfigurarPage() {
                     </button>
                   </div>
                 )}
+                {/* ====== UI: BADGES COMPOSTAS POR FÁBRICA — [Amapá · REVENDA · FOB] [G.Paniz · Normal] [Bermar] */}
                 <div style={{ display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" }}>
                   {fabricasDoCliente.map((fab) => {
                     const cor = FABRICA_COR[fab] ?? "#888";
+                    const nome = FABRICA_LABEL[fab] ?? fab;
+                    // Monta as partes da badge composta com base na fábrica
+                    const partes: string[] = [nome];
+                    if (fab === "amapa") {
+                      if (canalAmapa) partes.push(canalAmapa.toUpperCase());
+                      if (modalidadeAmapa) partes.push(modalidadeAmapa.toUpperCase());
+                    } else if (fab === "gpaniz" && tabelaGpaniz) {
+                      const label = TABELAS_GPANIZ.find((t) => t.value === tabelaGpaniz)?.label ?? tabelaGpaniz;
+                      partes.push(label);
+                    }
                     return (
                       <span
                         key={fab}
@@ -298,28 +312,14 @@ export default function ClienteConfigurarPage() {
                           background: `${cor}18`,
                           border: `1px solid ${cor}40`,
                           borderRadius: 20,
-                          padding: "1px 6px",
+                          padding: "2px 8px",
+                          whiteSpace: "nowrap",
                         }}
                       >
-                        {FABRICA_LABEL[fab] ?? fab}
+                        {partes.join(" · ")}
                       </span>
                     );
                   })}
-                  {cliente?.canal && (
-                    <span
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 700,
-                        color: isAtacado ? "#a78bfa" : "#888",
-                        background: isAtacado ? "rgba(167,139,250,0.1)" : "rgba(136,136,136,0.1)",
-                        border: `1px solid ${isAtacado ? "rgba(167,139,250,0.2)" : "rgba(136,136,136,0.2)"}`,
-                        borderRadius: 20,
-                        padding: "2px 8px",
-                      }}
-                    >
-                      {cliente.canal.toUpperCase()}
-                    </span>
-                  )}
                 </div>
               </>
             )}
@@ -440,7 +440,7 @@ export default function ClienteConfigurarPage() {
                       }}
                     >
                       <span>{c.label}</span>
-                      <span style={{ fontSize: 11, opacity: 0.7 }}>{c.desconto}</span>
+                      {c.desconto && <span style={{ fontSize: 11, opacity: 0.7 }}>{c.desconto}</span>}
                     </button>
                   ))}
                 </div>
@@ -561,7 +561,7 @@ export default function ClienteConfigurarPage() {
 
             {/* Botão buscar produtos */}
             <button
-              onClick={() => router.push(`/buscar-produtos?cliente_id=${clienteId}`)}
+              onClick={() => router.push(`/buscar-produtos?cliente_id=${id}`)}
               style={{
                 width: "100%",
                 minHeight: 52,
@@ -576,9 +576,33 @@ export default function ClienteConfigurarPage() {
                 alignItems: "center",
                 justifyContent: "center",
                 gap: 8,
+                marginBottom: 12,
               }}
             >
               Buscar produtos para este cliente
+            </button>
+
+            {/* ====== CLIENTS (CRUD) — EXCLUIR CLIENTE ====== */}
+            <button
+              onClick={async () => {
+                if (!confirm("Tem certeza que deseja excluir este cliente?")) return;
+                await supabase.from("clientes_fabricas").delete().eq("cliente_id", id);
+                await supabase.from("clientes").delete().eq("id", id);
+                router.push("/clientes");
+              }}
+              style={{
+                width: "100%",
+                minHeight: 48,
+                borderRadius: 14,
+                border: "1px solid rgba(239,68,68,0.3)",
+                background: "transparent",
+                color: "#ef4444",
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Excluir cliente
             </button>
           </>
         )}

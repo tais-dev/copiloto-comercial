@@ -1,10 +1,11 @@
 "use client";
 
 // ====== PRODUCT SEARCH — DETALHE DO PRODUTO SEM CLIENTE ======
-import { useEffect, useState, useRef, Suspense } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { use, useEffect, useState, useRef, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { FABRICA_COR, FABRICA_LABEL } from "@/lib/types";
+import { nomeCliente } from "@/lib/utils";
 
 // ====== TYPES LOCAIS ======
 type DadosProduto = {
@@ -18,6 +19,14 @@ type DadosProduto = {
   valor_unitario: number | null;
   valor_com_frete: number | null;
   fabrica_id: string;
+  fabrica_slug: string | null;
+  // ====== AMAPÁ: preços por modalidade (novos campos) ======
+  preco_fob: number | null;
+  preco_cif: number | null;
+  preco_redespacho: number | null;
+  condicao_pagamento: string | null;
+  regiao: string | null;
+  icms: number | null;
 };
 
 type GpanizPreco = {
@@ -96,11 +105,27 @@ function labelTabela(tipo: string | null): string {
   return tipo.charAt(0).toUpperCase() + tipo.slice(1);
 }
 
+// ====== AMAPÁ: CONDIÇÕES DE PAGAMENTO ======
+const CONDICOES_PAGAMENTO = [
+  { label: "Antecipado",           fator: 1.000 },
+  { label: "14 DDL",               fator: 1.010 },
+  { label: "Entrada/14/28",        fator: 1.010 },
+  { label: "28 DDL",               fator: 1.020 },
+  { label: "28 BNDES",             fator: 1.027 },
+  { label: "42 DDL",               fator: 1.030 },
+  { label: "28/56",                fator: 1.030 },
+  { label: "28/56/84",             fator: 1.040 },
+  { label: "28/56/84/112",         fator: 1.050 },
+  { label: "56/84/112",            fator: 1.060 },
+  { label: "56 DDL",               fator: 1.040 },
+  { label: "28/56/84/112/140",     fator: 1.100 },
+] as const;
+
 // ====== PRODUCT SEARCH — componente interno ======
-function ProdutoDetalheInner() {
-  const params = useParams();
+function ProdutoDetalheInner({ produtoId }: { produtoId: string }) {
   const router = useRouter();
-  const produtoId = params.produtoId as string;
+
+  console.log("produtoId:", produtoId);
 
   const [produto, setProduto] = useState<DadosProduto | null>(null);
   const [fabricaSlug, setFabricaSlug] = useState<string>("");
@@ -113,12 +138,33 @@ function ProdutoDetalheInner() {
   const [copiadoAmapa, setCopiadoAmapa] = useState(false);
   const [copiadoBermar, setCopiadoBermar] = useState(false);
 
+  // ====== AMAPÁ: modalidade de frete + condição de pagamento ======
+  const [modalidade, setModalidade] = useState<"fob" | "cif" | "redespacho">("fob");
+  const [condicaoIdx, setCondicaoIdx] = useState<number>(0);
+
+  // ====== AMAPÁ: seletor de cliente (bottom sheet) ======
+  const [mostrarClientes, setMostrarClientes] = useState(false);
+  const [buscaCliente, setBuscaCliente] = useState("");
+
   function copiarValor(valor: number, setCopied: (v: boolean) => void) {
     navigator.clipboard.writeText(
       new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(valor)
     );
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  }
+
+  // ====== AMAPÁ: abrir seletor de cliente — carrega lista lazy ======
+  async function abrirSeletor() {
+    setMostrarClientes(true);
+    if (clientes.length === 0) {
+      const { data } = await supabase
+        .from("clientes")
+        .select("id, razao_social, nome_fantasia")
+        .eq("ativo", true)
+        .order("razao_social");
+      setClientes(data ?? []);
+    }
   }
 
   // Cliente selector (Amapá)
@@ -136,7 +182,7 @@ function ProdutoDetalheInner() {
       const { data: prodData, error: prodError } = await supabase
         .from("produtos")
         .select(
-          "id, codigo, id_fabrica, descricao, ncm, ean, ipi, valor_unitario, valor_com_frete, fabrica_id"
+          "id, codigo, id_fabrica, descricao, ncm, ean, ipi, icms, valor_unitario, valor_com_frete, fabrica_id, fabrica_slug, preco_fob, preco_cif, preco_redespacho, condicao_pagamento, regiao"
         )
         .eq("id", produtoId)
         .single();
@@ -148,6 +194,12 @@ function ProdutoDetalheInner() {
       }
       setProduto(prodData);
 
+      // Defaultar condição de pagamento pela armazenada no banco
+      if (prodData.condicao_pagamento) {
+        const idx = CONDICOES_PAGAMENTO.findIndex((c) => c.label === prodData.condicao_pagamento);
+        if (idx >= 0) setCondicaoIdx(idx);
+      }
+
       // 2. Slug da fábrica
       const { data: fabricaData } = await supabase
         .from("fabricas")
@@ -158,24 +210,21 @@ function ProdutoDetalheInner() {
       const slug = fabricaData ? slugFromNome(fabricaData.nome) : "";
       setFabricaSlug(slug);
 
-      // 3. G.Paniz: buscar preços nas 3 tabelas pelo código
-      if (slug === "gpaniz" && prodData.codigo) {
-        const { data: precosData } = await supabase
+      // 3. G.Paniz: buscar os 3 tipos de tabela pelo id_fabrica (chave única por variação)
+      if (slug === "gpaniz" && prodData.id_fabrica) {
+        const { data: variacoes } = await supabase
           .from("produtos")
           .select("id, valor_unitario, valor_com_frete, tipo_tabela")
           .eq("fabrica_id", prodData.fabrica_id)
-          .eq("codigo", prodData.codigo);
-        setGpanizPrecos(precosData ?? []);
-      }
+          .eq("id_fabrica", prodData.id_fabrica);
 
-      // 4. Amapá: carregar lista de clientes para seletor
-      if (slug === "amapa") {
-        const { data: clientesData } = await supabase
-          .from("clientes")
-          .select("id, razao_social, nome_fantasia")
-          .eq("ativo", true)
-          .order("razao_social");
-        setClientes(clientesData ?? []);
+        // Deduplicar por tipo_tabela — manter apenas um registro por tipo
+        const seen = new Map<string, typeof variacoes extends (infer T)[] | null ? T : never>();
+        for (const v of variacoes ?? []) {
+          const tipo = v.tipo_tabela ?? "normal";
+          if (!seen.has(tipo)) seen.set(tipo, v);
+        }
+        setGpanizPrecos(Array.from(seen.values()));
       }
 
       setLoading(false);
@@ -187,15 +236,19 @@ function ProdutoDetalheInner() {
   const cor = FABRICA_COR[fabricaSlug] ?? "#888";
   const fabLabel = FABRICA_LABEL[fabricaSlug] ?? fabricaSlug;
 
-  const clientesFiltrados = buscarCliente.trim()
-    ? clientes.filter((c) => {
-        const t = buscarCliente.toLowerCase();
-        return (
-          c.razao_social.toLowerCase().includes(t) ||
-          (c.nome_fantasia ?? "").toLowerCase().includes(t)
-        );
-      })
+  const clientesFiltrados = buscaCliente.trim()
+    ? clientes.filter((c) =>
+        nomeCliente(c).toLowerCase().includes(buscaCliente.toLowerCase())
+      )
     : clientes;
+
+  // ====== AMAPÁ: cálculo de preço (sem cliente, para referência) ======
+  const condicao = CONDICOES_PAGAMENTO[condicaoIdx];
+  const precoBaseAmapa =
+    modalidade === "fob" ? (produto?.preco_fob ?? 0) :
+    modalidade === "cif" ? (produto?.preco_cif ?? 0) :
+    (produto?.preco_redespacho ?? 0);
+  const precoFinalAmapa = precoBaseAmapa * condicao.fator;
 
   return (
     <div
@@ -254,8 +307,23 @@ function ProdutoDetalheInner() {
               {produto?.descricao ?? "Produto"}
             </div>
           )}
-          <div style={{ fontSize: 12, color: cor, fontWeight: 600, marginTop: 2 }}>
-            {fabLabel}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+            <span style={{ fontSize: 12, color: cor, fontWeight: 600 }}>{fabLabel}</span>
+            {/* ====== AMAPÁ: badge de região no header ====== */}
+            {fabricaSlug === "amapa" && produto?.regiao && (
+              <span
+                style={{
+                  fontSize: 11,
+                  color: "#555",
+                  background: "#1a1a1a",
+                  border: "1px solid #2e2e2e",
+                  borderRadius: 20,
+                  padding: "1px 8px",
+                }}
+              >
+                {produto.regiao}
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -482,9 +550,130 @@ function ProdutoDetalheInner() {
               </div>
             )}
 
-            {/* ====== AMAPÁ: FOB + SELECIONAR CLIENTE ====== */}
+            {/* ====== AMAPÁ: MODALIDADE + CONDIÇÃO + PREÇO + CLIENTE ====== */}
             {fabricaSlug === "amapa" && (
               <>
+                {/* ====== AMAPÁ: MODALIDADE DE FRETE ====== */}
+                <div
+                  style={{
+                    background: "#1a1a1a",
+                    border: "1px solid #2e2e2e",
+                    borderRadius: 16,
+                    padding: 20,
+                    marginBottom: 16,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: "#555",
+                      letterSpacing: 1,
+                      textTransform: "uppercase",
+                      marginBottom: 12,
+                    }}
+                  >
+                    Modalidade de Frete
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {(
+                      [
+                        { value: "fob" as const, label: "FOB", disponivel: true },
+                        { value: "cif" as const, label: "CIF", disponivel: !!produto?.preco_cif },
+                        { value: "redespacho" as const, label: "Redespacho", disponivel: !!produto?.preco_redespacho },
+                      ]
+                    ).map((opt) => {
+                      const ativo = modalidade === opt.value;
+                      return (
+                        <button
+                          key={opt.value}
+                          onClick={() => { if (opt.disponivel) setModalidade(opt.value); }}
+                          style={{
+                            flex: 1,
+                            padding: "10px 4px",
+                            borderRadius: 10,
+                            border: `1px solid ${ativo ? cor : opt.disponivel ? "#2e2e2e" : "#1e1e1e"}`,
+                            background: ativo ? `${cor}18` : "transparent",
+                            color: ativo ? cor : opt.disponivel ? "#888" : "#333",
+                            cursor: opt.disponivel ? "pointer" : "default",
+                            textAlign: "center",
+                            transition: "all 150ms ease",
+                            minHeight: 52,
+                          }}
+                        >
+                          <div style={{ fontSize: 12, fontWeight: 700 }}>{opt.label}</div>
+                          {!opt.disponivel && (
+                            <div style={{ fontSize: 10, color: "#333", marginTop: 2 }}>—</div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {modalidade === "fob" && (
+                    <div
+                      style={{
+                        marginTop: 12,
+                        padding: "8px 12px",
+                        borderRadius: 8,
+                        background: "rgba(245,158,11,0.08)",
+                        border: "1px solid rgba(245,158,11,0.2)",
+                        fontSize: 12,
+                        color: "#f59e0b",
+                      }}
+                    >
+                      FOB — frete por conta do cliente
+                    </div>
+                  )}
+                </div>
+
+                {/* ====== AMAPÁ: CONDIÇÃO DE PAGAMENTO ====== */}
+                <div
+                  style={{
+                    background: "#1a1a1a",
+                    border: "1px solid #2e2e2e",
+                    borderRadius: 16,
+                    padding: 20,
+                    marginBottom: 16,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: "#555",
+                      letterSpacing: 1,
+                      textTransform: "uppercase",
+                      marginBottom: 12,
+                    }}
+                  >
+                    Condição de Pagamento
+                  </div>
+                  <select
+                    value={condicaoIdx}
+                    onChange={(e) => setCondicaoIdx(Number(e.target.value))}
+                    style={{
+                      width: "100%",
+                      padding: "12px 14px",
+                      borderRadius: 10,
+                      border: "1px solid #2e2e2e",
+                      background: "#242424",
+                      color: "#f0f0f0",
+                      fontSize: 15,
+                      outline: "none",
+                      cursor: "pointer",
+                      minHeight: 48,
+                    }}
+                  >
+                    {CONDICOES_PAGAMENTO.map((c, i) => (
+                      <option key={i} value={i}>
+                        {c.label}
+                        {c.fator > 1 ? ` (+${((c.fator - 1) * 100).toFixed(1)}%)` : " (base)"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* ====== AMAPÁ: PREÇO PRINCIPAL ====== */}
                 <div
                   style={{
                     background: "#1a1a1a",
@@ -495,39 +684,34 @@ function ProdutoDetalheInner() {
                     marginBottom: 16,
                   }}
                 >
-                  <div style={{ fontSize: 12, color: "#888", marginBottom: 6 }}>
-                    Base FOB
-                  </div>
                   <div
                     className="mono"
                     style={{ fontSize: 38, fontWeight: 700, color: cor, letterSpacing: -1 }}
                   >
-                    {brl(produto?.valor_unitario)}
+                    {brl(precoFinalAmapa)}
                   </div>
                   {/* ====== UI: COPY BUTTON — AMAPÁ ====== */}
-                  {produto?.valor_unitario != null && (
-                    <button
-                      onClick={() => copiarValor(produto.valor_unitario!, setCopiadoAmapa)}
-                      style={{
-                        marginTop: 14,
-                        padding: "8px 20px",
-                        borderRadius: 20,
-                        border: `1px solid ${copiadoAmapa ? cor + "60" : "#2e2e2e"}`,
-                        background: copiadoAmapa ? cor + "15" : "transparent",
-                        color: copiadoAmapa ? cor : "#555",
-                        fontSize: 13,
-                        fontWeight: 600,
-                        cursor: "pointer",
-                        transition: "all 200ms ease",
-                        minHeight: 36,
-                      }}
-                    >
-                      {copiadoAmapa ? "copiado ✓" : "copiar FOB"}
-                    </button>
-                  )}
+                  <button
+                    onClick={() => copiarValor(precoFinalAmapa, setCopiadoAmapa)}
+                    style={{
+                      marginTop: 14,
+                      padding: "8px 20px",
+                      borderRadius: 20,
+                      border: `1px solid ${copiadoAmapa ? cor + "60" : "#2e2e2e"}`,
+                      background: copiadoAmapa ? cor + "15" : "transparent",
+                      color: copiadoAmapa ? cor : "#555",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      transition: "all 200ms ease",
+                      minHeight: 36,
+                    }}
+                  >
+                    {copiadoAmapa ? "copiado ✓" : `copiar ${modalidade.toUpperCase()}`}
+                  </button>
                 </div>
 
-                {/* Aviso para selecionar cliente */}
+                {/* ====== AMAPÁ: AVISO — SELECIONAR CLIENTE ====== */}
                 <div
                   style={{
                     background: "rgba(245,158,11,0.08)",
@@ -538,17 +722,17 @@ function ProdutoDetalheInner() {
                   }}
                 >
                   <div style={{ fontSize: 13, color: "#f59e0b", fontWeight: 600, marginBottom: 4 }}>
-                    Selecione um cliente para calcular
+                    ⚠ Selecione um cliente para ver
                   </div>
                   <div style={{ fontSize: 13, color: "#f59e0b", opacity: 0.8 }}>
-                    o preco com canal e frete
+                    o preço personalizado
                   </div>
                 </div>
 
-                {/* ====== UI: SELETOR DE CLIENTE (AMAPÁ) ====== */}
-                <div style={{ position: "relative", marginBottom: 16 }}>
+                {/* ====== UI: SELETOR DE CLIENTE — BOTÃO (AMAPÁ) ====== */}
+                <div style={{ marginBottom: 16 }}>
                   <button
-                    onClick={() => setDropdownAberto((v) => !v)}
+                    onClick={abrirSeletor}
                     style={{
                       width: "100%",
                       padding: "14px 16px",
@@ -559,85 +743,12 @@ function ProdutoDetalheInner() {
                       fontSize: 15,
                       fontWeight: 600,
                       cursor: "pointer",
-                      textAlign: "left",
+                      textAlign: "center",
                       minHeight: 52,
                     }}
                   >
-                    Selecionar cliente
+                    👤 Selecionar cliente
                   </button>
-
-                  {dropdownAberto && (
-                    <div
-                      style={{
-                        position: "absolute",
-                        top: "calc(100% + 4px)",
-                        left: 0,
-                        right: 0,
-                        background: "#1a1a1a",
-                        border: "1px solid #2e2e2e",
-                        borderRadius: 12,
-                        zIndex: 30,
-                        overflow: "hidden",
-                      }}
-                    >
-                      <div style={{ padding: 8 }}>
-                        <input
-                          type="text"
-                          value={buscarCliente}
-                          onChange={(e) => setBuscarCliente(e.target.value)}
-                          placeholder="Buscar cliente..."
-                          autoFocus
-                          style={{
-                            width: "100%",
-                            boxSizing: "border-box",
-                            padding: "10px 12px",
-                            borderRadius: 8,
-                            border: "1px solid #2e2e2e",
-                            background: "#242424",
-                            color: "#f0f0f0",
-                            fontSize: 14,
-                            outline: "none",
-                          }}
-                        />
-                      </div>
-                      <div style={{ maxHeight: 240, overflowY: "auto" }}>
-                        {clientesFiltrados.slice(0, 30).map((c) => (
-                          <button
-                            key={c.id}
-                            onClick={() =>
-                              router.push(`/clientes/${c.id}/produto/${produtoId}`)
-                            }
-                            style={{
-                              width: "100%",
-                              padding: "12px 16px",
-                              background: "none",
-                              border: "none",
-                              borderTop: "1px solid #242424",
-                              color: "#f0f0f0",
-                              fontSize: 14,
-                              cursor: "pointer",
-                              textAlign: "left",
-                              minHeight: 48,
-                            }}
-                          >
-                            {c.nome_fantasia || c.razao_social}
-                          </button>
-                        ))}
-                        {clientesFiltrados.length === 0 && (
-                          <div
-                            style={{
-                              padding: 16,
-                              color: "#555",
-                              fontSize: 14,
-                              textAlign: "center",
-                            }}
-                          >
-                            Nenhum cliente encontrado
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
                 </div>
               </>
             )}
@@ -653,8 +764,9 @@ function ProdutoDetalheInner() {
             >
               <DetalheRow
                 label="IPI"
-                valor={produto?.ipi ? `${produto.ipi}%` : "Sem IPI"}
+                valor={produto?.ipi ? `${(produto.ipi * 100).toFixed(2).replace('.', ',')}%` : "Sem IPI"}
               />
+              <DetalheRow label="ICMS" valor={produto?.icms != null ? `${(produto.icms * 100).toFixed(0)}%` : null} />
               <DetalheRow label="NCM" valor={produto?.ncm} mono />
               <DetalheRow label="EAN" valor={produto?.ean} mono />
               <DetalheRow label="Cod." valor={produto?.codigo} mono />
@@ -663,15 +775,131 @@ function ProdutoDetalheInner() {
           </>
         )}
       </div>
+
+      {/* ====== AMAPÁ: BOTTOM SHEET — SELETOR DE CLIENTE ====== */}
+      {mostrarClientes && (
+        <>
+          {/* Overlay */}
+          <div
+            onClick={() => { setMostrarClientes(false); setBuscaCliente(""); }}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.6)",
+              zIndex: 40,
+            }}
+          />
+          {/* Sheet */}
+          <div
+            style={{
+              position: "fixed",
+              bottom: 0,
+              left: 0,
+              right: 0,
+              background: "#1a1a1a",
+              borderRadius: "20px 20px 0 0",
+              zIndex: 50,
+              padding: "20px 20px 32px",
+              maxHeight: "70vh",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 16,
+              }}
+            >
+              <span style={{ fontSize: 16, fontWeight: 700, color: "#f0f0f0" }}>
+                Selecionar cliente
+              </span>
+              <button
+                onClick={() => { setMostrarClientes(false); setBuscaCliente(""); }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#888",
+                  fontSize: 18,
+                  cursor: "pointer",
+                  padding: "4px 8px",
+                  lineHeight: 1,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <input
+              type="text"
+              value={buscaCliente}
+              onChange={(e) => setBuscaCliente(e.target.value)}
+              placeholder="Buscar cliente..."
+              autoFocus
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: "1px solid #2e2e2e",
+                background: "#242424",
+                color: "#f0f0f0",
+                fontSize: 15,
+                outline: "none",
+                marginBottom: 12,
+              }}
+            />
+
+            <div style={{ overflowY: "auto", flex: 1 }}>
+              {clientesFiltrados.length === 0 ? (
+                <div
+                  style={{
+                    padding: "24px 0",
+                    textAlign: "center",
+                    color: "#555",
+                    fontSize: 14,
+                  }}
+                >
+                  {clientes.length === 0 ? "Carregando..." : "Nenhum cliente encontrado"}
+                </div>
+              ) : (
+                clientesFiltrados.slice(0, 50).map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => router.push(`/clientes/${c.id}/produto/${produtoId}`)}
+                    style={{
+                      width: "100%",
+                      padding: "14px 4px",
+                      background: "none",
+                      border: "none",
+                      borderBottom: "1px solid #2e2e2e",
+                      color: "#f0f0f0",
+                      fontSize: 15,
+                      cursor: "pointer",
+                      textAlign: "left",
+                      minHeight: 52,
+                    }}
+                  >
+                    {nomeCliente(c)}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
 // ====== PRODUCT SEARCH — wrapper Suspense (useSearchParams) ======
-export default function ProdutoDetalheSemClientePage() {
+export default function ProdutoDetalheSemClientePage({ params }: { params: Promise<{ produtoId: string }> }) {
+  const { produtoId } = use(params);
   return (
     <Suspense fallback={null}>
-      <ProdutoDetalheInner />
+      <ProdutoDetalheInner produtoId={produtoId} />
     </Suspense>
   );
 }

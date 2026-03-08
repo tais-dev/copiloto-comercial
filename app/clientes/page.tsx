@@ -10,18 +10,45 @@ import { nomeCliente } from "@/lib/utils";
 // ====== TYPES LOCAIS ======
 type FiltroFabrica = "todos" | "amapa" | "gpaniz" | "bermar";
 
+type ClienteFabricaCfg = {
+  fabrica: string;
+  tabela: string | null;
+  canal: string | null;
+  modalidade_frete: string | null;
+};
+
 type ClienteItem = {
   id: string;
   razao_social: string;
   nome_fantasia: string | null;
   canal: string | null;
-  clientes_fabricas: Array<{ fabrica: string; tabela: string | null }>;
+  clientes_fabricas: ClienteFabricaCfg[];
 };
 
-// ====== UI: CHIP DE FÁBRICA ======
-function FabricaChip({ fabrica }: { fabrica: string }) {
-  const cor = FABRICA_COR[fabrica] ?? "#888";
-  const label = FABRICA_LABEL[fabrica] ?? fabrica;
+// ====== UI: HELPER — LABEL DA TABELA G.PANIZ ======
+const TABELA_LABEL: Record<string, string> = {
+  normal: "Normal",
+  especial: "Especial",
+  ecommerce: "E-commerce",
+};
+
+// ====== UI: BADGE COMPOSTA POR FÁBRICA ======
+// Amapá: "Amapá · REVENDA · FOB"
+// G.Paniz: "G.Paniz · E-commerce"
+// Bermar: "Bermar"
+// Canal e tabela lidos de clientes_fabricas (não de clientes.canal)
+function FabricaBadge({ cfg }: { cfg: ClienteFabricaCfg }) {
+  const cor = FABRICA_COR[cfg.fabrica] ?? "#888";
+  const nome = FABRICA_LABEL[cfg.fabrica] ?? cfg.fabrica;
+
+  const partes: string[] = [nome];
+  if (cfg.fabrica === "amapa") {
+    if (cfg.canal) partes.push(cfg.canal.toUpperCase());
+    if (cfg.modalidade_frete) partes.push(cfg.modalidade_frete.toUpperCase());
+  } else if (cfg.fabrica === "gpaniz" && cfg.tabela) {
+    partes.push(TABELA_LABEL[cfg.tabela] ?? cfg.tabela);
+  }
+
   return (
     <span
       style={{
@@ -34,31 +61,10 @@ function FabricaChip({ fabrica }: { fabrica: string }) {
         background: `${cor}18`,
         border: `1px solid ${cor}40`,
         letterSpacing: 0.2,
-      }}
-    >
-      {label}
-    </span>
-  );
-}
-
-// ====== UI: BADGE DE CANAL ======
-function CanalBadge({ canal }: { canal: string }) {
-  const isAtacado = canal.toUpperCase().includes("ATAC");
-  return (
-    <span
-      style={{
-        fontSize: 10,
-        fontWeight: 700,
-        color: isAtacado ? "#a78bfa" : "#888",
-        background: isAtacado ? "rgba(167,139,250,0.1)" : "rgba(136,136,136,0.1)",
-        border: `1px solid ${isAtacado ? "rgba(167,139,250,0.2)" : "rgba(136,136,136,0.2)"}`,
-        borderRadius: 20,
-        padding: "2px 8px",
         whiteSpace: "nowrap",
-        letterSpacing: 0.3,
       }}
     >
-      {canal.toUpperCase()}
+      {partes.join(" · ")}
     </span>
   );
 }
@@ -100,7 +106,8 @@ export default function ClientesPage() {
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
-  // ====== SEARCH QUERY (SUPABASE) — clientes com fábricas aninhadas ======
+  // ====== SEARCH QUERY (SUPABASE) — clientes com sub-configs de fábrica ======
+  // canal e modalidade_frete lidos de clientes_fabricas (fonte da verdade)
   useEffect(() => {
     async function carregar() {
       setLoading(true);
@@ -115,7 +122,9 @@ export default function ClientesPage() {
           canal,
           clientes_fabricas (
             fabrica,
-            tabela
+            tabela,
+            canal,
+            modalidade_frete
           )
         `)
         .eq("ativo", true)
@@ -204,8 +213,26 @@ export default function ClientesPage() {
           >
             Copiloto Comercial
           </div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: "#f0f0f0" }}>
-            Clientes
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ fontSize: 22, fontWeight: 700, color: "#f0f0f0" }}>
+              Clientes
+            </div>
+            {/* ====== CLIENTS (CRUD) — BOTÃO NOVO CLIENTE ====== */}
+            <button
+              onClick={() => router.push("/clientes/novo")}
+              style={{
+                padding: "8px 16px",
+                borderRadius: 20,
+                border: "none",
+                background: "#00e5a0",
+                color: "#0f0f0f",
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              + Novo
+            </button>
           </div>
         </div>
 
@@ -312,6 +339,7 @@ export default function ClientesPage() {
                   {filtrado.length} cliente{filtrado.length !== 1 ? "s" : ""}
                 </div>
 
+                {/* ====== UI: CARD DO CLIENTE ====== */}
                 {filtrado.map((cliente) => {
                   const nome = nomeCliente(cliente);
                   return (
@@ -332,41 +360,29 @@ export default function ClientesPage() {
                         transition: "border-color 200ms ease",
                       }}
                       onMouseEnter={(e) => {
-                        (e.currentTarget as HTMLButtonElement).style.borderColor =
-                          "#3e3e3e";
+                        (e.currentTarget as HTMLButtonElement).style.borderColor = "#3e3e3e";
                       }}
                       onMouseLeave={(e) => {
-                        (e.currentTarget as HTMLButtonElement).style.borderColor =
-                          "#2e2e2e";
+                        (e.currentTarget as HTMLButtonElement).style.borderColor = "#2e2e2e";
                       }}
                     >
-                      {/* Nome + canal */}
-                      <div
+                      {/* Nome do cliente */}
+                      <span
                         style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: 8,
+                          fontSize: 15,
+                          fontWeight: 600,
+                          color: "#f0f0f0",
+                          lineHeight: 1.3,
                         }}
                       >
-                        <span
-                          style={{
-                            fontSize: 15,
-                            fontWeight: 600,
-                            color: "#f0f0f0",
-                            lineHeight: 1.3,
-                          }}
-                        >
-                          {nome}
-                        </span>
-                        {cliente.canal && <CanalBadge canal={cliente.canal} />}
-                      </div>
+                        {nome}
+                      </span>
 
-                      {/* Chips de fábricas */}
+                      {/* Badges compostas: [Amapá · REVENDA · FOB] [G.Paniz · Normal] [Bermar] */}
                       {cliente.clientes_fabricas.length > 0 && (
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                           {cliente.clientes_fabricas.map((cf, i) => (
-                            <FabricaChip key={i} fabrica={cf.fabrica} />
+                            <FabricaBadge key={i} cfg={cf} />
                           ))}
                         </div>
                       )}

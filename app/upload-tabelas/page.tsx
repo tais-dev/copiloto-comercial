@@ -27,17 +27,15 @@ type FileItem = DeteccaoArquivo & {
   erro: string | null;
 };
 
-// Catalog types (mantidos do design anterior)
+// Catalog types
 type ResumoLinha = {
-  fabricante: string;
-  fabrica_id: string | null;
+  fabrica_slug: string;
   tipo_tabela: string;
   total: number;
 };
 
 type ResumoGrupo = {
-  fabricante: string;
-  fabrica_id: string | null;
+  fabrica_slug: string;
   tabelas: { tipo_tabela: string; total: number }[];
 };
 
@@ -54,6 +52,15 @@ const TIPO_LABEL: Record<string, string> = {
   ecommerce: "E-commerce",
 };
 
+// Formata nome da loja Obramax a partir do slug: 'obramax_cariacica_es' → 'Cariacica Es'
+function nomeLoja(tipo: string): string {
+  return tipo
+    .replace("obramax_", "")
+    .split("_")
+    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+    .join(" ");
+}
+
 function genId() {
   return Math.random().toString(36).slice(2, 10);
 }
@@ -61,13 +68,13 @@ function genId() {
 function agruparResumo(linhas: ResumoLinha[]): ResumoGrupo[] {
   const map = new Map<string, ResumoGrupo>();
   for (const l of linhas) {
-    if (!map.has(l.fabricante)) {
-      map.set(l.fabricante, { fabricante: l.fabricante, fabrica_id: l.fabrica_id, tabelas: [] });
+    if (!map.has(l.fabrica_slug)) {
+      map.set(l.fabrica_slug, { fabrica_slug: l.fabrica_slug, tabelas: [] });
     }
-    map.get(l.fabricante)!.tabelas.push({ tipo_tabela: l.tipo_tabela, total: l.total });
+    map.get(l.fabrica_slug)!.tabelas.push({ tipo_tabela: l.tipo_tabela, total: l.total });
   }
   return Array.from(map.values()).sort((a, b) =>
-    a.fabricante.localeCompare(b.fabricante, "pt-BR")
+    a.fabrica_slug.localeCompare(b.fabrica_slug, "pt-BR")
   );
 }
 
@@ -405,39 +412,72 @@ export default function UploadTabelasPage() {
   const [deletando, setDeletando] = useState<string | null>(null);
 
   // ====== CATALOG LOGIC: CARREGAR RESUMO ======
+  // Amapá usa UUID diretamente (mais confiável) + query separada para Obramax.
+  // G.Paniz e Bermar: fetch tipo_tabela leve + dedup + count (poucos produtos).
+  const AMAPA_FABRICA_ID = "d6c7f740-c998-48b4-bae6-ae22d4b2d662";
+
   async function loadResumo() {
     setResumoCarregando(true);
     try {
-      const [{ data: prodData }, { data: fabData }] = await Promise.all([
-        supabase.from("produtos").select("fabricante, fabrica_id, tipo_tabela").limit(5000),
-        supabase.from("fabricas").select("id, nome"),
-      ]);
+      const linhas: ResumoLinha[] = [];
 
-      if (!prodData) return;
+      // ── AMAPÁ ──────────────────────────────────────────────────────────────
+      // 1) Count direto da tabela principal (tipo_tabela = "amapa") — sem baixar linhas
+      const { count: amapaPrincipalCount } = await supabase
+        .from("produtos")
+        .select("id", { count: "exact", head: true })
+        .eq("fabrica_id", AMAPA_FABRICA_ID)
+        .eq("tipo_tabela", "amapa");
 
-      const fabMap = new Map<string, string>();
-      for (const f of fabData ?? []) fabMap.set(f.id, f.nome);
-
-      const contagem = new Map<string, ResumoLinha>();
-      for (const row of prodData) {
-        const grupoKey = row.fabrica_id ?? (row.fabricante ?? "sem-fabrica").trim();
-        const nomeDisplay = row.fabrica_id
-          ? (fabMap.get(row.fabrica_id) ?? row.fabricante ?? "Sem fábrica")
-          : (row.fabricante ?? "Sem fábrica");
-        const tipo = (row.tipo_tabela ?? "sem tipo").trim().toLowerCase();
-        const key = `${grupoKey}__${tipo}`;
-        if (!contagem.has(key)) {
-          contagem.set(key, {
-            fabricante: nomeDisplay,
-            fabrica_id: row.fabrica_id ?? null,
-            tipo_tabela: tipo,
-            total: 0,
-          });
-        }
-        contagem.get(key)!.total += 1;
+      if (amapaPrincipalCount && amapaPrincipalCount > 0) {
+        linhas.push({ fabrica_slug: "amapa", tipo_tabela: "amapa", total: amapaPrincipalCount });
       }
 
-      setResumoGrupos(agruparResumo(Array.from(contagem.values())));
+      // 2) Buscar tipos Obramax (tudo que não é "amapa") usando fabrica_id UUID
+      //    Obramax products = tipo_tabela começa com "obramax_" — são poucos registros
+      const { data: tiposObramax } = await supabase
+        .from("produtos")
+        .select("tipo_tabela")
+        .eq("fabrica_id", AMAPA_FABRICA_ID)
+        .neq("tipo_tabela", "amapa")
+        .limit(5000);
+
+      const obramaxUnicos = [
+        ...new Set((tiposObramax ?? []).map((t) => t.tipo_tabela ?? "").filter(Boolean)),
+      ];
+
+      for (const tipo of obramaxUnicos) {
+        const { count } = await supabase
+          .from("produtos")
+          .select("id", { count: "exact", head: true })
+          .eq("fabrica_id", AMAPA_FABRICA_ID)
+          .eq("tipo_tabela", tipo);
+        linhas.push({ fabrica_slug: "amapa", tipo_tabela: tipo, total: count ?? 0 });
+      }
+
+      // ── G.PANIZ e BERMAR ───────────────────────────────────────────────────
+      for (const fab of ["gpaniz", "bermar"] as FabricaSlug[]) {
+        const { data: tipos } = await supabase
+          .from("produtos")
+          .select("tipo_tabela")
+          .eq("fabrica_slug", fab)
+          .limit(10000);
+
+        if (!tipos || tipos.length === 0) continue;
+
+        const tiposUnicos = [...new Set(tipos.map((t) => t.tipo_tabela ?? ""))];
+
+        for (const tipo of tiposUnicos) {
+          const { count } = await supabase
+            .from("produtos")
+            .select("id", { count: "exact", head: true })
+            .eq("fabrica_slug", fab)
+            .eq("tipo_tabela", tipo);
+          linhas.push({ fabrica_slug: fab, tipo_tabela: tipo, total: count ?? 0 });
+        }
+      }
+
+      setResumoGrupos(agruparResumo(linhas));
     } finally {
       setResumoCarregando(false);
     }
@@ -445,7 +485,7 @@ export default function UploadTabelasPage() {
 
   // ====== CATALOG LOGIC: DELETAR TABELA ======
   async function deletarTabela(grupo: ResumoGrupo, tipo_tabela: string) {
-    const label = `${grupo.fabricante} — ${TIPO_LABEL[tipo_tabela] ?? tipo_tabela}`;
+    const label = `${grupo.fabrica_slug} — ${TIPO_LABEL[tipo_tabela] ?? tipo_tabela}`;
     if (
       !window.confirm(
         `Excluir todos os produtos de:\n\n${label}\n\nEssa ação não pode ser desfeita.`
@@ -453,16 +493,14 @@ export default function UploadTabelasPage() {
     )
       return;
 
-    const chave = `${grupo.fabricante}__${tipo_tabela}`;
+    const chave = `${grupo.fabrica_slug}__${tipo_tabela}`;
     setDeletando(chave);
     try {
-      let query = supabase.from("produtos").delete();
-      if (grupo.fabrica_id) {
-        query = query.eq("fabrica_id", grupo.fabrica_id).eq("tipo_tabela", tipo_tabela);
-      } else {
-        query = query.eq("fabricante", grupo.fabricante).eq("tipo_tabela", tipo_tabela);
-      }
-      const { error } = await query;
+      const { error } = await supabase
+        .from("produtos")
+        .delete()
+        .eq("fabrica_slug", grupo.fabrica_slug)
+        .eq("tipo_tabela", tipo_tabela);
       if (error) {
         alert(`Erro ao excluir: ${error.message}`);
         return;
@@ -794,17 +832,16 @@ export default function UploadTabelasPage() {
         {!resumoCarregando && resumoGrupos.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {resumoGrupos.map((g) => {
-              // Detectar cor da fábrica para o separador visual
-              const fabSlug = g.fabrica_id
-                ? Object.entries(FABRICA_COR).find(([k]) =>
-                    g.fabricante.toLowerCase().includes(k === "gpaniz" ? "paniz" : k)
-                  )?.[0]
-                : null;
-              const cor = fabSlug ? FABRICA_COR[fabSlug] : "#555";
+              const cor = FABRICA_COR[g.fabrica_slug] ?? "#555";
+              const nomeDisplay =
+                g.fabrica_slug === "amapa" ? "Amapá" :
+                g.fabrica_slug === "gpaniz" ? "G.Paniz" :
+                g.fabrica_slug === "bermar" ? "Bermar" :
+                g.fabrica_slug;
 
               return (
                 <div
-                  key={g.fabricante}
+                  key={g.fabrica_slug}
                   style={{
                     background: "#242424",
                     borderRadius: 12,
@@ -821,76 +858,66 @@ export default function UploadTabelasPage() {
                       marginBottom: 10,
                     }}
                   >
-                    {g.fabricante}
+                    {nomeDisplay}
                   </div>
 
-                  {/* Linhas por tipo_tabela */}
+                  {/* Linhas por tipo_tabela — tabelas principais (não-Obramax) */}
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {g.tabelas
+                      .filter((t) => !t.tipo_tabela.startsWith("obramax_"))
                       .sort((a, b) => a.tipo_tabela.localeCompare(b.tipo_tabela))
                       .map((t) => {
-                        const chave = `${g.fabricante}__${t.tipo_tabela}`;
+                        const chave = `${g.fabrica_slug}__${t.tipo_tabela}`;
                         const estaDeletando = deletando === chave;
-
                         return (
-                          <div
-                            key={t.tipo_tabela}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              gap: 10,
-                            }}
-                          >
+                          <div key={t.tipo_tabela} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                              {/* Badge tipo */}
-                              <span
-                                style={{
-                                  padding: "2px 10px",
-                                  borderRadius: 20,
-                                  background: "#1a1a1a",
-                                  border: "1px solid #2e2e2e",
-                                  fontSize: 11,
-                                  fontWeight: 700,
-                                  color: "#888",
-                                }}
-                              >
+                              <span style={{ padding: "2px 10px", borderRadius: 20, background: "#1a1a1a", border: "1px solid #2e2e2e", fontSize: 11, fontWeight: 700, color: "#888" }}>
                                 {TIPO_LABEL[t.tipo_tabela] ?? t.tipo_tabela}
                               </span>
-                              <span
-                                style={{
-                                  fontWeight: 600,
-                                  fontSize: 14,
-                                  color: "#f0f0f0",
-                                }}
-                              >
-                                {t.total.toLocaleString("pt-BR")} produto
-                                {t.total !== 1 ? "s" : ""}
+                              <span style={{ fontWeight: 600, fontSize: 14, color: "#f0f0f0" }}>
+                                {t.total.toLocaleString("pt-BR")} produto{t.total !== 1 ? "s" : ""}
                               </span>
                             </div>
-
-                            {/* Botão excluir */}
-                            <button
-                              onClick={() => deletarTabela(g, t.tipo_tabela)}
-                              disabled={estaDeletando}
-                              style={{
-                                padding: "3px 10px",
-                                borderRadius: 8,
-                                border: "1px solid #f59e0b30",
-                                background: "transparent",
-                                color: estaDeletando ? "#555" : "#f59e0b",
-                                fontWeight: 600,
-                                fontSize: 12,
-                                cursor: estaDeletando ? "not-allowed" : "pointer",
-                                transition: "opacity 150ms ease",
-                                opacity: estaDeletando ? 0.5 : 1,
-                              }}
-                            >
+                            <button onClick={() => deletarTabela(g, t.tipo_tabela)} disabled={estaDeletando} style={{ padding: "3px 10px", borderRadius: 8, border: "1px solid #f59e0b30", background: "transparent", color: estaDeletando ? "#555" : "#f59e0b", fontWeight: 600, fontSize: 12, cursor: estaDeletando ? "not-allowed" : "pointer", transition: "opacity 150ms ease", opacity: estaDeletando ? 0.5 : 1 }}>
                               {estaDeletando ? "Excluindo..." : "Excluir"}
                             </button>
                           </div>
                         );
                       })}
+
+                    {/* ====== UI: OBRAMAX SUBSECTION — só aparece na seção Amapá ====== */}
+                    {g.tabelas.some((t) => t.tipo_tabela.startsWith("obramax_")) && (
+                      <div style={{ borderTop: "1px solid #333", paddingTop: 10, marginTop: 2 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: "#555", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 8 }}>
+                          Obramax
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          {g.tabelas
+                            .filter((t) => t.tipo_tabela.startsWith("obramax_"))
+                            .sort((a, b) => a.tipo_tabela.localeCompare(b.tipo_tabela))
+                            .map((t) => {
+                              const chave = `${g.fabrica_slug}__${t.tipo_tabela}`;
+                              const estaDeletando = deletando === chave;
+                              return (
+                                <div key={t.tipo_tabela} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                    <span style={{ fontWeight: 500, fontSize: 13, color: "#ccc" }}>
+                                      {nomeLoja(t.tipo_tabela)}
+                                    </span>
+                                    <span style={{ fontSize: 12, color: "#888" }}>
+                                      {t.total.toLocaleString("pt-BR")} produto{t.total !== 1 ? "s" : ""}
+                                    </span>
+                                  </div>
+                                  <button onClick={() => deletarTabela(g, t.tipo_tabela)} disabled={estaDeletando} style={{ padding: "3px 10px", borderRadius: 8, border: "1px solid #f59e0b30", background: "transparent", color: estaDeletando ? "#555" : "#f59e0b", fontWeight: 600, fontSize: 12, cursor: estaDeletando ? "not-allowed" : "pointer", transition: "opacity 150ms ease", opacity: estaDeletando ? 0.5 : 1 }}>
+                                    {estaDeletando ? "Excluindo..." : "Excluir"}
+                                  </button>
+                                </div>
+                              );
+                            })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               );

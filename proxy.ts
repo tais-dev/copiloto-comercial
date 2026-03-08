@@ -1,7 +1,10 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-export async function middleware(request: NextRequest) {
+// ====== PROXY (antes: middleware) — autenticação Supabase ======
+// Renomeado de middleware.ts para proxy.ts conforme Next.js 15
+// https://nextjs.org/docs/messages/middleware-to-proxy
+export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(

@@ -1,8 +1,8 @@
 "use client";
 
 // ====== PRODUCT SEARCH — DETALHE DO PRODUTO POR CLIENTE ======
-import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { use, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { FABRICA_COR, FABRICA_LABEL } from "@/lib/types";
 
@@ -20,6 +20,13 @@ type DadosProduto = {
   valor_unitario: number | null;
   valor_com_frete: number | null;
   fabrica_id: string;
+  // ====== AMAPÁ: preços diretos por modalidade de frete ======
+  preco_fob: number | null;
+  preco_cif: number | null;
+  preco_redespacho: number | null;
+  condicao_pagamento: string | null;
+  regiao: string | null;
+  icms: number | null;
 };
 
 type DadosPreco = {
@@ -34,14 +41,21 @@ type DadosFrete = {
   redespacho: number | null;
 };
 
-// ====== AMAPÁ: CANAIS DE VENDA COM DESCONTO ======
-// Fonte: aba Dados da planilha Amapá.
-// O valor_unitario foi calculado com desconto ATACADO (0.69).
-// Para recalcular por canal: precoCheio = valor_unitario / 0.69 → precoCanal = precoCheio × fator
-const CANAIS = [
-  { label: "Distribuidor", key: "distribuidor", fator: 0.55, cor: "#a78bfa" },
-  { label: "Revenda",      key: "revenda",      fator: 0.63, cor: "#60a5fa" },
-  { label: "Atacado",      key: "atacado",      fator: 0.69, cor: "#fb923c" },
+// ====== AMAPÁ: CONDIÇÕES DE PAGAMENTO ======
+// Multiplicadores aplicados sobre o preço base (FOB/CIF/Redespacho)
+const CONDICOES_PAGAMENTO = [
+  { label: "Antecipado",           fator: 1.000 },
+  { label: "14 DDL",               fator: 1.010 },
+  { label: "Entrada/14/28",        fator: 1.010 },
+  { label: "28 DDL",               fator: 1.020 },
+  { label: "28 BNDES",             fator: 1.027 },
+  { label: "42 DDL",               fator: 1.030 },
+  { label: "28/56",                fator: 1.030 },
+  { label: "28/56/84",             fator: 1.040 },
+  { label: "28/56/84/112",         fator: 1.050 },
+  { label: "56/84/112",            fator: 1.060 },
+  { label: "56 DDL",               fator: 1.040 },
+  { label: "28/56/84/112/140",     fator: 1.100 },
 ] as const;
 
 // ====== UI: SKELETON ======
@@ -99,11 +113,11 @@ function brl(v: number) {
 }
 
 // ====== PRODUCT SEARCH — PAGE DETALHE ======
-export default function ProdutoDetalhe() {
-  const params = useParams();
+export default function ProdutoDetalhe({ params }: { params: Promise<{ id: string; produtoId: string }> }) {
+  const { id: clienteId, produtoId } = use(params);
   const router = useRouter();
-  const clienteId = params.id as string;
-  const produtoId = params.produtoId as string;
+
+  console.log("produtoId:", produtoId, "clienteId:", clienteId);
 
   const [produto, setProduto] = useState<DadosProduto | null>(null);
   const [preco, setPreco] = useState<DadosPreco | null>(null);
@@ -112,11 +126,9 @@ export default function ProdutoDetalhe() {
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
-  // ====== AMAPÁ: estados de canal, modalidade de frete e região ======
-  const [canal, setCanal] = useState<string>("atacado");
+  // ====== AMAPÁ: modalidade de frete + condição de pagamento ======
   const [modalidade, setModalidade] = useState<ModalidadeFrete>("fob");
-  const [regiaoSelecionada, setRegiaoSelecionada] = useState<string | null>(null);
-  const [todasRegioes, setTodasRegioes] = useState<DadosFrete[]>([]);
+  const [condicaoIdx, setCondicaoIdx] = useState<number>(0);
 
   // ====== G.PANIZ / BERMAR: frete por região do cliente ======
   const [freteCliente, setFreteCliente] = useState<DadosFrete | null>(null);
@@ -138,11 +150,11 @@ export default function ProdutoDetalhe() {
       setLoading(true);
       setErro(null);
 
-      // 1. Produto (colunas reais do schema)
+      // 1. Produto — inclui campos Amapá (preco_fob/cif/redespacho)
       const { data: prodData, error: prodError } = await supabase
         .from("produtos")
         .select(
-          "id, codigo, id_fabrica, descricao, ncm, ean, ipi, valor_unitario, valor_com_frete, fabrica_id"
+          "id, codigo, id_fabrica, descricao, ncm, ean, ipi, icms, valor_unitario, valor_com_frete, fabrica_id, preco_fob, preco_cif, preco_redespacho, condicao_pagamento, regiao"
         )
         .eq("id", produtoId)
         .single();
@@ -154,7 +166,7 @@ export default function ProdutoDetalhe() {
       }
       setProduto(prodData);
 
-      // 2. Slug da fábrica via join em fabricas
+      // 2. Slug da fábrica
       const { data: fabricaData } = await supabase
         .from("fabricas")
         .select("nome")
@@ -164,55 +176,36 @@ export default function ProdutoDetalhe() {
       const slug = fabricaData ? slugFromNome(fabricaData.nome) : "";
       setFabricaSlug(slug);
 
-      if (slug === "amapa") {
-        // ====== AMAPÁ: carregar todas as regiões de frete ======
-        const { data: regioes } = await supabase
-          .from("regioes_frete")
-          .select("regiao, fob, cif, redespacho")
-          .order("regiao");
-        setTodasRegioes(regioes ?? []);
-
-        // Pré-selecionar região do cliente se cadastrada
-        const { data: cfData } = await supabase
+      // ====== G.PANIZ: buscar preço na tabela configurada do cliente ======
+      if (slug === "gpaniz") {
+        const { data: cfGpaniz } = await supabase
           .from("clientes_fabricas")
-          .select("regiao")
+          .select("tabela")
           .eq("cliente_id", clienteId)
-          .eq("fabrica", "amapa")
+          .eq("fabrica", "gpaniz")
           .maybeSingle();
-        if (cfData?.regiao) setRegiaoSelecionada(cfData.regiao);
-      } else {
-        // ====== G.PANIZ: buscar preço na tabela configurada do cliente ======
-        // Bermar usa produto.valor_unitario diretamente (tabela universal, como Amapá)
-        if (slug === "gpaniz") {
-          // 1. Tabela configurada do cliente para G.Paniz
-          const { data: cfGpaniz } = await supabase
-            .from("clientes_fabricas")
-            .select("tabela")
-            .eq("cliente_id", clienteId)
-            .eq("fabrica", "gpaniz")
-            .maybeSingle();
 
-          const tipoTabela = cfGpaniz?.tabela ?? "normal";
-          setGpanizTipoTabela(tipoTabela);
+        const tipoTabela = cfGpaniz?.tabela ?? "normal";
+        setGpanizTipoTabela(tipoTabela);
 
-          // 2. Buscar produto na tabela correta pelo código (mesmo fabrica_id + codigo + tipo_tabela)
-          const { data: prodTabela } = await supabase
-            .from("produtos")
-            .select("valor_unitario, valor_com_frete")
-            .eq("fabrica_id", prodData.fabrica_id)
-            .eq("codigo", prodData.codigo)
-            .eq("tipo_tabela", tipoTabela)
-            .maybeSingle();
+        const { data: prodTabela } = await supabase
+          .from("produtos")
+          .select("valor_unitario, valor_com_frete")
+          .eq("fabrica_id", prodData.fabrica_id)
+          .eq("codigo", prodData.codigo)
+          .eq("tipo_tabela", tipoTabela)
+          .maybeSingle();
 
-          if (prodTabela) {
-            setPreco({
-              preco_vigente: prodTabela.valor_unitario ?? 0,
-              preco_com_frete: prodTabela.valor_com_frete ?? null,
-            });
-          }
+        if (prodTabela) {
+          setPreco({
+            preco_vigente: prodTabela.valor_unitario ?? 0,
+            preco_com_frete: prodTabela.valor_com_frete ?? null,
+          });
         }
+      }
 
-        // Frete por regiao/uf do cliente (G.Paniz e Bermar)
+      // ====== BERMAR: frete por região do cliente ======
+      if (slug === "bermar") {
         const { data: clienteData } = await supabase
           .from("clientes")
           .select("regiao, uf")
@@ -238,54 +231,42 @@ export default function ProdutoDetalhe() {
 
   // ====== ORDERS + INSTALLMENTS — cálculo de preço ======
   const isAmapa = fabricaSlug === "amapa";
-  const cor = FABRICA_COR[fabricaSlug] ?? "#888";
-  const fabLabel = FABRICA_LABEL[fabricaSlug] ?? fabricaSlug;
-
-  // ── Amapá: canal → % desconto → preço canal → + frete
-  const canalDef = CANAIS.find((c) => c.key === canal) ?? CANAIS[2];
-  const valorUnitario = produto?.valor_unitario ?? 0;
-  const precoCheio = valorUnitario / 0.69;        // reverter desconto atacado
-  const precoCanal = precoCheio * canalDef.fator; // aplicar desconto do canal
-
-  const regiaoData = todasRegioes.find((r) => r.regiao === regiaoSelecionada);
-  const pctFreteAmapa: number | null =
-    modalidade === "fob"
-      ? 0
-      : modalidade === "cif"
-      ? (regiaoData?.cif ?? null)
-      : (regiaoData?.redespacho ?? null);
-
-  // null = CIF/Redespacho selecionado mas sem região → preço indeterminado
-  const totalAmapa =
-    pctFreteAmapa !== null ? precoCanal * (1 + pctFreteAmapa / 100) : null;
-  const valorFreteAmapa =
-    pctFreteAmapa !== null ? precoCanal * (pctFreteAmapa / 100) : null;
-
-  // ── G.Paniz / Bermar
   const isGpaniz = fabricaSlug === "gpaniz";
   const isBermar = fabricaSlug === "bermar";
+  const cor = FABRICA_COR[fabricaSlug] ?? "#888";
+  const fabLabel = FABRICA_LABEL[fabricaSlug] ?? fabricaSlug;
+  const ipi = produto?.ipi ?? 0;
+
+  // ── Amapá: preço base direto do banco × condição de pagamento
+  // FOB = frete por conta do cliente (preço de fábrica)
+  // CIF = frete incluso até o cliente (preço já calculado pela Amapá)
+  // Redespacho = via transportadora intermediária
+  const condicao = CONDICOES_PAGAMENTO[condicaoIdx];
+  const precoBaseAmapa =
+    modalidade === "fob"
+      ? (produto?.preco_fob ?? produto?.valor_unitario ?? 0)
+      : modalidade === "cif"
+      ? (produto?.preco_cif ?? 0)
+      : (produto?.preco_redespacho ?? 0);
+  const precoFinalAmapa = precoBaseAmapa * condicao.fator;
+  const valorIpiAmapa = precoFinalAmapa * (ipi / 100);
+  const totalComIpiAmapa = precoFinalAmapa + valorIpiAmapa;
+
+  // ── G.Paniz / Bermar
   const isGpanizEcommerce = isGpaniz && gpanizTipoTabela === "ecommerce";
-  // Bermar: tabela universal → valor_unitario
-  // G.Paniz ecommerce: valor_com_frete (frete já incluso no preço)
-  // G.Paniz normal/especial: valor_unitario, sem frete separado
   const precoBase = isBermar
     ? (produto?.valor_unitario ?? 0)
     : isGpanizEcommerce
     ? (preco?.preco_com_frete ?? preco?.preco_vigente ?? 0)
     : (preco?.preco_vigente ?? 0);
-  // G.Paniz não tem frete separado — preço é final
-  const pctFreteCliente = isGpaniz ? 0
-    : modalidade === "fob" ? 0
+  const pctFreteCliente =
+    modalidade === "fob" ? 0
     : modalidade === "cif" ? (freteCliente?.cif ?? 0)
     : (freteCliente?.redespacho ?? 0);
   const totalOutros = precoBase * (1 + pctFreteCliente / 100);
   const valorFreteOutros = precoBase * (pctFreteCliente / 100);
-
-  // IPI (aplicado sobre o total c/ frete)
-  const ipi = produto?.ipi ?? 0;
-  const totalParaIpi = isAmapa ? (totalAmapa ?? precoCanal) : totalOutros;
-  const valorIpi = totalParaIpi * (ipi / 100);
-  const totalComIpi = totalParaIpi + valorIpi;
+  const valorIpiOutros = totalOutros * (ipi / 100);
+  const totalComIpiOutros = totalOutros + valorIpiOutros;
 
   return (
     <div
@@ -344,8 +325,23 @@ export default function ProdutoDetalhe() {
               {produto?.descricao ?? "Produto"}
             </div>
           )}
-          <div style={{ fontSize: 12, color: cor, fontWeight: 600, marginTop: 2 }}>
-            {fabLabel}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+            <span style={{ fontSize: 12, color: cor, fontWeight: 600 }}>{fabLabel}</span>
+            {/* ====== AMAPÁ: badge de região ====== */}
+            {isAmapa && produto?.regiao && (
+              <span
+                style={{
+                  fontSize: 11,
+                  color: "#555",
+                  background: "#1a1a1a",
+                  border: "1px solid #2e2e2e",
+                  borderRadius: 20,
+                  padding: "1px 8px",
+                }}
+              >
+                {produto.regiao}
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -377,7 +373,7 @@ export default function ProdutoDetalhe() {
           </div>
         ) : (
           <>
-            {/* ====== AMAPÁ: SELETOR DE CANAL ====== */}
+            {/* ====== AMAPÁ: MODALIDADE DE FRETE ====== */}
             {isAmapa && (
               <div
                 style={{
@@ -398,44 +394,108 @@ export default function ProdutoDetalhe() {
                     marginBottom: 12,
                   }}
                 >
-                  Canal
+                  Modalidade de Frete
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  {CANAIS.map((c) => {
-                    const ativo = canal === c.key;
+                  {(
+                    [
+                      { value: "fob" as ModalidadeFrete, label: "FOB", disponivel: true },
+                      { value: "cif" as ModalidadeFrete, label: "CIF", disponivel: !!produto?.preco_cif },
+                      { value: "redespacho" as ModalidadeFrete, label: "Redespacho", disponivel: !!produto?.preco_redespacho },
+                    ] as const
+                  ).map((opt) => {
+                    const ativo = modalidade === opt.value;
                     return (
                       <button
-                        key={c.key}
-                        onClick={() => setCanal(c.key)}
+                        key={opt.value}
+                        onClick={() => { if (opt.disponivel) setModalidade(opt.value); }}
                         style={{
                           flex: 1,
-                          padding: "8px 4px",
+                          padding: "10px 4px",
                           borderRadius: 10,
-                          border: `1px solid ${ativo ? c.cor : "#2e2e2e"}`,
-                          background: ativo ? `${c.cor}18` : "transparent",
-                          color: ativo ? c.cor : "#888",
-                          cursor: "pointer",
+                          border: `1px solid ${ativo ? cor : opt.disponivel ? "#2e2e2e" : "#1e1e1e"}`,
+                          background: ativo ? `${cor}18` : "transparent",
+                          color: ativo ? cor : opt.disponivel ? "#888" : "#333",
+                          cursor: opt.disponivel ? "pointer" : "default",
                           textAlign: "center",
                           transition: "all 150ms ease",
+                          minHeight: 52,
                         }}
                       >
-                        <div style={{ fontSize: 12, fontWeight: 700 }}>
-                          {c.label}
-                        </div>
-                        <div
-                          className="mono"
-                          style={{
-                            fontSize: 11,
-                            color: ativo ? c.cor : "#555",
-                            marginTop: 2,
-                          }}
-                        >
-                          -{Math.round((1 - c.fator) * 100)}%
-                        </div>
+                        <div style={{ fontSize: 12, fontWeight: 700 }}>{opt.label}</div>
+                        {!opt.disponivel && (
+                          <div style={{ fontSize: 10, color: "#333", marginTop: 2 }}>—</div>
+                        )}
                       </button>
                     );
                   })}
                 </div>
+
+                {/* FOB badge informativo */}
+                {modalidade === "fob" && (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      padding: "8px 12px",
+                      borderRadius: 8,
+                      background: "rgba(245,158,11,0.08)",
+                      border: "1px solid rgba(245,158,11,0.2)",
+                      fontSize: 12,
+                      color: "#f59e0b",
+                    }}
+                  >
+                    FOB — frete por conta do cliente
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ====== AMAPÁ: CONDIÇÃO DE PAGAMENTO ====== */}
+            {isAmapa && (
+              <div
+                style={{
+                  background: "#1a1a1a",
+                  border: "1px solid #2e2e2e",
+                  borderRadius: 16,
+                  padding: 20,
+                  marginBottom: 16,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: "#555",
+                    letterSpacing: 1,
+                    textTransform: "uppercase",
+                    marginBottom: 12,
+                  }}
+                >
+                  Condição de Pagamento
+                </div>
+                <select
+                  value={condicaoIdx}
+                  onChange={(e) => setCondicaoIdx(Number(e.target.value))}
+                  style={{
+                    width: "100%",
+                    padding: "12px 14px",
+                    borderRadius: 10,
+                    border: "1px solid #2e2e2e",
+                    background: "#242424",
+                    color: "#f0f0f0",
+                    fontSize: 15,
+                    outline: "none",
+                    cursor: "pointer",
+                    minHeight: 48,
+                  }}
+                >
+                  {CONDICOES_PAGAMENTO.map((c, i) => (
+                    <option key={i} value={i}>
+                      {c.label}
+                      {c.fator > 1 ? ` (+${((c.fator - 1) * 100).toFixed(1)}%)` : " (base)"}
+                    </option>
+                  ))}
+                </select>
               </div>
             )}
 
@@ -450,242 +510,115 @@ export default function ProdutoDetalhe() {
                 textAlign: "center",
               }}
             >
-              {isAmapa && (
-                <div style={{ fontSize: 12, color: "#888", marginBottom: 6 }}>
-                  Base FOB (Atacado): {brl(valorUnitario)}
-                </div>
-              )}
+              <div
+                className="mono"
+                style={{ fontSize: 38, fontWeight: 700, color: cor, letterSpacing: -1 }}
+              >
+                {isAmapa ? brl(precoFinalAmapa) : brl(totalOutros)}
+              </div>
 
-              {/* Preço principal */}
-              {isAmapa ? (
-                totalAmapa !== null ? (
-                  <div
-                    className="mono"
-                    style={{ fontSize: 38, fontWeight: 700, color: cor, letterSpacing: -1 }}
-                  >
-                    {brl(totalAmapa)}
-                  </div>
-                ) : (
-                  <>
-                    <div
-                      className="mono"
-                      style={{ fontSize: 38, fontWeight: 700, color: "#555", letterSpacing: -1 }}
-                    >
-                      —
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 12,
-                        color: "#f59e0b",
-                        marginTop: 6,
-                        background: "rgba(245,158,11,0.08)",
-                        border: "1px solid rgba(245,158,11,0.2)",
-                        borderRadius: 8,
-                        padding: "4px 10px",
-                        display: "inline-block",
-                      }}
-                    >
-                      Selecione uma região para ver o preço com frete
-                    </div>
-                  </>
-                )
-              ) : (
-                <>
-                  <div
-                    className="mono"
-                    style={{ fontSize: 38, fontWeight: 700, color: cor, letterSpacing: -1 }}
-                  >
-                    {brl(totalOutros)}
-                  </div>
-                  {isGpaniz && (
-                    <div
-                      style={{
-                        display: "inline-block",
-                        marginTop: 10,
-                        fontSize: 12,
-                        fontWeight: 600,
-                        color: cor,
-                        background: `${cor}15`,
-                        border: `1px solid ${cor}30`,
-                        borderRadius: 20,
-                        padding: "3px 12px",
-                      }}
-                    >
-                      {isGpanizEcommerce
-                        ? "E-commerce · c/ frete incluso"
-                        : gpanizTipoTabela === "especial"
-                        ? "Especial"
-                        : "Normal"}
-                    </div>
-                  )}
-                </>
-              )}
-
-              {isAmapa && pctFreteAmapa !== null && pctFreteAmapa > 0 && (
-                <div style={{ fontSize: 12, color: "#555", marginTop: 4 }}>
-                  inclui {pctFreteAmapa}% de frete ({modalidade.toUpperCase()})
+              {/* G.Paniz badge */}
+              {isGpaniz && (
+                <div
+                  style={{
+                    display: "inline-block",
+                    marginTop: 10,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: cor,
+                    background: `${cor}15`,
+                    border: `1px solid ${cor}30`,
+                    borderRadius: 20,
+                    padding: "3px 12px",
+                  }}
+                >
+                  {isGpanizEcommerce
+                    ? "E-commerce · c/ frete incluso"
+                    : gpanizTipoTabela === "especial"
+                    ? "Especial"
+                    : "Normal"}
                 </div>
               )}
 
               {/* ====== UI: COPY BUTTON — PREÇO PRINCIPAL ====== */}
-              {(() => {
-                const valorParaCopiar = isAmapa ? (totalAmapa ?? precoCanal) : totalOutros;
-                const podecopiar = isAmapa ? totalAmapa !== null : true;
-                return podecopiar ? (
-                  <button
-                    onClick={() => copiarPreco(valorParaCopiar)}
-                    style={{
-                      marginTop: 14,
-                      padding: "8px 24px",
-                      borderRadius: 20,
-                      border: `1px solid ${copiado ? cor + "60" : "#2e2e2e"}`,
-                      background: copiado ? cor + "15" : "transparent",
-                      color: copiado ? cor : "#555",
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      transition: "all 200ms ease",
-                      minHeight: 36,
-                    }}
-                  >
-                    {copiado ? "copiado ✓" : "copiar preço"}
-                  </button>
-                ) : null;
-              })()}
-            </div>
-
-            {/* ====== UI: SELETOR DE FRETE — não exibir para G.Paniz ====== */}
-            {!isGpaniz && (
-            <div
-              style={{
-                background: "#1a1a1a",
-                border: "1px solid #2e2e2e",
-                borderRadius: 16,
-                padding: 20,
-                marginBottom: 16,
-              }}
-            >
-              <div
+              <button
+                onClick={() => copiarPreco(isAmapa ? precoFinalAmapa : totalOutros)}
                 style={{
-                  fontSize: 12,
-                  fontWeight: 700,
-                  color: "#555",
-                  letterSpacing: 1,
-                  textTransform: "uppercase",
-                  marginBottom: 12,
+                  marginTop: 14,
+                  padding: "8px 24px",
+                  borderRadius: 20,
+                  border: `1px solid ${copiado ? cor + "60" : "#2e2e2e"}`,
+                  background: copiado ? cor + "15" : "transparent",
+                  color: copiado ? cor : "#555",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  transition: "all 200ms ease",
+                  minHeight: 36,
                 }}
               >
-                Modalidade de Frete
-              </div>
-
-              {/* Pills FOB / CIF / Redespacho */}
-              <div style={{ display: "flex", gap: 8, marginBottom: isAmapa && modalidade !== "fob" ? 16 : 0 }}>
-                {(
-                  [
-                    { value: "fob" as ModalidadeFrete, label: "FOB", sub: "0%" },
-                    { value: "cif" as ModalidadeFrete, label: "CIF", sub: isAmapa ? "var" : (freteCliente?.cif ? `${freteCliente.cif}%` : "—") },
-                    { value: "redespacho" as ModalidadeFrete, label: "Redespacho", sub: isAmapa ? "var" : (freteCliente?.redespacho ? `${freteCliente.redespacho}%` : "—") },
-                  ]
-                ).map((opt) => {
-                  const ativo = modalidade === opt.value;
-                  return (
-                    <button
-                      key={opt.value}
-                      onClick={() => setModalidade(opt.value)}
-                      style={{
-                        flex: 1,
-                        padding: "8px 4px",
-                        borderRadius: 10,
-                        border: `1px solid ${ativo ? cor : "#2e2e2e"}`,
-                        background: ativo ? `${cor}18` : "transparent",
-                        color: ativo ? cor : "#888",
-                        cursor: "pointer",
-                        textAlign: "center",
-                        transition: "all 150ms ease",
-                      }}
-                    >
-                      <div style={{ fontSize: 12, fontWeight: 700 }}>{opt.label}</div>
-                      <div
-                        className="mono"
-                        style={{ fontSize: 11, color: ativo ? cor : "#555", marginTop: 2 }}
-                      >
-                        {opt.sub}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* ====== AMAPÁ: SELETOR DE REGIÃO ====== */}
-              {isAmapa && modalidade !== "fob" && (
-                <>
-                  <div
-                    style={{
-                      fontSize: 12,
-                      fontWeight: 700,
-                      color: "#555",
-                      letterSpacing: 1,
-                      textTransform: "uppercase",
-                      marginBottom: 10,
-                    }}
-                  >
-                    Região
-                  </div>
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
-                      gap: 6,
-                    }}
-                  >
-                    {todasRegioes.map((r) => {
-                      const pct =
-                        modalidade === "cif" ? r.cif : r.redespacho;
-                      const ativo = regiaoSelecionada === r.regiao;
-                      return (
-                        <button
-                          key={r.regiao}
-                          onClick={() => setRegiaoSelecionada(r.regiao)}
-                          style={{
-                            padding: "7px 10px",
-                            borderRadius: 8,
-                            border: `1px solid ${ativo ? cor : "#2e2e2e"}`,
-                            background: ativo ? `${cor}18` : "transparent",
-                            color: ativo ? cor : "#888",
-                            cursor: "pointer",
-                            textAlign: "left",
-                            fontSize: 12,
-                            transition: "all 150ms ease",
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            gap: 6,
-                          }}
-                        >
-                          <span
-                            style={{
-                              fontWeight: 600,
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            {r.regiao}
-                          </span>
-                          <span
-                            className="mono"
-                            style={{ fontSize: 11, color: ativo ? cor : "#555", flexShrink: 0 }}
-                          >
-                            {pct != null ? `${pct}%` : "—"}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
+                {copiado ? "copiado ✓" : "copiar preço"}
+              </button>
             </div>
-            )} {/* end !isGpaniz */}
+
+            {/* ====== UI: SELETOR DE FRETE — apenas Bermar (G.Paniz e Amapá não usam) ====== */}
+            {isBermar && (
+              <div
+                style={{
+                  background: "#1a1a1a",
+                  border: "1px solid #2e2e2e",
+                  borderRadius: 16,
+                  padding: 20,
+                  marginBottom: 16,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: "#555",
+                    letterSpacing: 1,
+                    textTransform: "uppercase",
+                    marginBottom: 12,
+                  }}
+                >
+                  Modalidade de Frete
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {(
+                    [
+                      { value: "fob" as ModalidadeFrete, label: "FOB", sub: "0%" },
+                      { value: "cif" as ModalidadeFrete, label: "CIF", sub: freteCliente?.cif ? `${freteCliente.cif}%` : "—" },
+                      { value: "redespacho" as ModalidadeFrete, label: "Redespacho", sub: freteCliente?.redespacho ? `${freteCliente.redespacho}%` : "—" },
+                    ] as const
+                  ).map((opt) => {
+                    const ativo = modalidade === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        onClick={() => setModalidade(opt.value)}
+                        style={{
+                          flex: 1,
+                          padding: "8px 4px",
+                          borderRadius: 10,
+                          border: `1px solid ${ativo ? cor : "#2e2e2e"}`,
+                          background: ativo ? `${cor}18` : "transparent",
+                          color: ativo ? cor : "#888",
+                          cursor: "pointer",
+                          textAlign: "center",
+                          transition: "all 150ms ease",
+                        }}
+                      >
+                        <div style={{ fontSize: 12, fontWeight: 700 }}>{opt.label}</div>
+                        <div className="mono" style={{ fontSize: 11, color: ativo ? cor : "#555", marginTop: 2 }}>
+                          {opt.sub}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* ====== UI: RESUMO DE PREÇOS ====== */}
             <div
@@ -698,26 +631,13 @@ export default function ProdutoDetalhe() {
               }}
             >
               {isAmapa ? (
+                // ====== AMAPÁ: preço base (condição já aplicada) + IPI ======
                 <>
-                  <DetalheRow
-                    label={`Preço canal (${canalDef.label} −${Math.round((1 - canalDef.fator) * 100)}%)`}
-                    valor={brl(precoCanal)}
-                    mono
-                  />
-                  <DetalheRow
-                    label={`Frete ${pctFreteAmapa != null ? `(${pctFreteAmapa}%)` : ""}`}
-                    valor={valorFreteAmapa != null ? brl(valorFreteAmapa) : "—"}
-                    mono
-                  />
-                  <DetalheRow
-                    label="Total c/ frete"
-                    valor={totalAmapa != null ? brl(totalAmapa) : "—"}
-                    mono
-                  />
+                  <DetalheRow label="Preço base" valor={brl(precoFinalAmapa)} mono />
                   {ipi > 0 && (
                     <>
-                      <DetalheRow label={`IPI (${ipi}%)`} valor={totalAmapa != null ? brl(valorIpi) : "—"} mono />
-                      <DetalheRow label="Total c/ IPI" valor={totalAmapa != null ? brl(totalComIpi) : "—"} mono />
+                      <DetalheRow label={`IPI (${(ipi * 100).toFixed(2).replace('.', ',')}%)`} valor={brl(valorIpiAmapa)} mono />
+                      <DetalheRow label="Total c/ IPI" valor={brl(totalComIpiAmapa)} mono />
                     </>
                   )}
                 </>
@@ -731,8 +651,8 @@ export default function ProdutoDetalhe() {
                   />
                   {ipi > 0 && (
                     <>
-                      <DetalheRow label={`IPI (${ipi}%)`} valor={brl(valorIpi)} mono />
-                      <DetalheRow label="Total c/ IPI" valor={brl(totalComIpi)} mono />
+                      <DetalheRow label={`IPI (${(ipi * 100).toFixed(2).replace('.', ',')}%)`} valor={brl(valorIpiOutros)} mono />
+                      <DetalheRow label="Total c/ IPI" valor={brl(totalComIpiOutros)} mono />
                     </>
                   )}
                 </>
@@ -744,16 +664,16 @@ export default function ProdutoDetalhe() {
                   <DetalheRow label="Total c/ frete" valor={brl(totalOutros)} mono />
                   {ipi > 0 && (
                     <>
-                      <DetalheRow label={`IPI (${ipi}%)`} valor={brl(valorIpi)} mono />
-                      <DetalheRow label="Total c/ IPI" valor={brl(totalComIpi)} mono />
+                      <DetalheRow label={`IPI (${(ipi * 100).toFixed(2).replace('.', ',')}%)`} valor={brl(valorIpiOutros)} mono />
+                      <DetalheRow label="Total c/ IPI" valor={brl(totalComIpiOutros)} mono />
                     </>
                   )}
                 </>
               )}
             </div>
 
-            {/* ====== BERMAR: CONDIÇÃO DE PAGAMENTO — apenas informativo ====== */}
-            {fabricaSlug === "bermar" && (
+            {/* ====== BERMAR: CONDIÇÃO DE PAGAMENTO ====== */}
+            {isBermar && (
               <div
                 style={{
                   background: "#1a1a1a",
@@ -767,9 +687,7 @@ export default function ProdutoDetalhe() {
                   flexWrap: "wrap",
                 }}
               >
-                <span style={{ fontSize: 13, color: "#888" }}>
-                  Condição de pagamento:
-                </span>
+                <span style={{ fontSize: 13, color: "#888" }}>Condição de pagamento:</span>
                 <span
                   className="mono"
                   style={{
@@ -788,7 +706,6 @@ export default function ProdutoDetalhe() {
               </div>
             )}
 
-
             {/* ====== GRID DE DETALHES TÉCNICOS ====== */}
             <div
               style={{
@@ -799,11 +716,15 @@ export default function ProdutoDetalhe() {
                 marginBottom: 16,
               }}
             >
-              <DetalheRow label="IPI" valor={ipi ? `${ipi}%` : "Sem IPI"} />
+              <DetalheRow label="IPI" valor={ipi ? `${(ipi * 100).toFixed(2).replace('.', ',')}%` : "Sem IPI"} />
+              <DetalheRow label="ICMS" valor={produto?.icms != null ? `${(produto.icms * 100).toFixed(0)}%` : null} />
               <DetalheRow label="NCM" valor={produto?.ncm} mono />
               <DetalheRow label="EAN" valor={produto?.ean} mono />
               <DetalheRow label="Cód. Ref." valor={produto?.codigo} mono />
               <DetalheRow label="Cód. Fábrica" valor={produto?.id_fabrica} mono />
+              {isAmapa && produto?.regiao && (
+                <DetalheRow label="Região" valor={produto.regiao} mono />
+              )}
             </div>
           </>
         )}

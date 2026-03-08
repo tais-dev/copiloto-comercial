@@ -12,6 +12,7 @@ type ProdutoResult = {
   id: string;
   codigo: string | null;
   descricao: string;
+  modelo: string | null;
   valor_unitario: number | null;
   fabrica: string;
   precoCalculado?: number | null;
@@ -156,7 +157,25 @@ function BuscarProdutosInner() {
 
     setBuscando(true);
 
-    const term = t.trim();
+    // ====== PRODUCT SEARCH: normalização do termo ======
+    // Gera variações para cobrir casos como "AE05" ↔ "AE 05" e "BATEDEIRA5L" ↔ "BATEDEIRA 5L"
+    function normalizarTermo(termo: string): string[] {
+      const limpo = termo.trim();
+      const semEspacos = limpo.replace(/\s+/g, "");
+      // Insere espaço entre bloco de letras seguido de dígitos: "AE05" → "AE 05"
+      const letraNum = semEspacos.replace(/([A-Za-z]+)(\d)/g, "$1 $2");
+      // Insere espaço entre dígito seguido de letra: "05G" → "05 G"
+      const numLetra = semEspacos.replace(/(\d)([A-Za-z])/g, "$1 $2");
+      return [...new Set([limpo, semEspacos, letraNum, numLetra])];
+    }
+
+    const variacoes = normalizarTermo(t);
+    const filtros = variacoes.flatMap((v) => [
+      `descricao.ilike.%${v}%`,
+      `codigo.ilike.%${v}%`,
+    ]);
+    const orFilter = filtros.join(",");
+
     const amapId = fabricaSlugToId.current["amapa"];
     const gpanizId = fabricaSlugToId.current["gpaniz"];
     const bermarId = fabricaSlugToId.current["bermar"];
@@ -168,7 +187,7 @@ function BuscarProdutosInner() {
             .from("produtos")
             .select("id, codigo, descricao, valor_unitario")
             .eq("fabrica_id", amapId)
-            .or(`descricao.ilike.%${term}%,codigo.ilike.%${term}%`)
+            .or(orFilter)
             .limit(20)
         : { data: [] },
       gpanizId
@@ -177,7 +196,7 @@ function BuscarProdutosInner() {
               .from("produtos")
               .select("id, codigo, descricao, valor_unitario")
               .eq("fabrica_id", gpanizId)
-              .or(`descricao.ilike.%${term}%,codigo.ilike.%${term}%`)
+              .or(orFilter)
               .limit(20);
             if (gpanizCfg?.tabela) q = q.eq("tipo_tabela", gpanizCfg.tabela);
             return q;
@@ -186,9 +205,9 @@ function BuscarProdutosInner() {
       bermarId
         ? supabase
             .from("produtos")
-            .select("id, codigo, descricao, valor_unitario")
+            .select("id, codigo, descricao, modelo, valor_unitario")
             .eq("fabrica_id", bermarId)
-            .or(`descricao.ilike.%${term}%,codigo.ilike.%${term}%`)
+            .or(orFilter)
             .limit(20)
         : { data: [] },
     ]);
@@ -196,15 +215,15 @@ function BuscarProdutosInner() {
     const todos: ProdutoResult[] = [
       ...((resAmapa.data ?? []) as any[]).map((p) => ({
         id: p.id, codigo: p.codigo, descricao: p.descricao,
-        valor_unitario: p.valor_unitario, fabrica: "amapa",
+        modelo: null, valor_unitario: p.valor_unitario, fabrica: "amapa",
       })),
       ...((resGpaniz.data ?? []) as any[]).map((p) => ({
         id: p.id, codigo: p.codigo, descricao: p.descricao,
-        valor_unitario: p.valor_unitario, fabrica: "gpaniz",
+        modelo: null, valor_unitario: p.valor_unitario, fabrica: "gpaniz",
       })),
       ...((resBermar.data ?? []) as any[]).map((p) => ({
         id: p.id, codigo: p.codigo, descricao: p.descricao,
-        valor_unitario: p.valor_unitario, fabrica: "bermar",
+        modelo: p.modelo ?? null, valor_unitario: p.valor_unitario, fabrica: "bermar",
       })),
     ];
 
@@ -507,7 +526,6 @@ function BuscarProdutosInner() {
                       display: "flex",
                       flexDirection: "column",
                       gap: 4,
-                      minHeight: 72,
                       boxSizing: "border-box",
                     }}
                   >
@@ -532,19 +550,24 @@ function BuscarProdutosInner() {
                       </span>
                     </div>
 
-                    {/* Linha 2: descrição */}
+                    {/* Linha 2: descrição — exibir completa, sem truncar */}
                     <div
                       style={{
                         fontSize: 14,
                         fontWeight: 600,
                         color: "#f0f0f0",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
+                        lineHeight: 1.4,
                       }}
                     >
                       {p.descricao}
                     </div>
+
+                    {/* Modelo Bermar (ex: "BM 03 NR BIV") — só quando existir */}
+                    {p.modelo && (
+                      <div style={{ fontSize: 11, color: "#555", fontFamily: "monospace" }}>
+                        {p.modelo}
+                      </div>
+                    )}
 
                     {/* Linha 3: preço + label + botão copiar */}
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
